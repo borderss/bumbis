@@ -5,6 +5,7 @@ const routes = [
     path: '/',
     name: 'Home',
     component: () => import('@/pages/HomePage.vue'),
+    meta: { layout: 'BlankLayout', title: 'BUMBIS' },
   },
   {
     path: '/:pathMatch(.*)*',

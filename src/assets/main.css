@@ -1,13 +1,25 @@
 @import url('./ress.css');
 
-body {
-  --page-background: #fafafa;
-  --light-gray: #c6c6c6;
-  --text-color: #333;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-  font-family: sans-serif;
+.material-symbols-outlined {
+  font-variation-settings:
+    'FILL' 0,
+    'wght' 400,
+    'GRAD' 0,
+    'opsz' 24;
+}
+
+body {
+  font-family: 'Plus Jakarta Sans', sans-serif;
   font-size: 16px;
   line-height: 1.5;
-  color: var(--text-color);
-  background-color: var(--page-background);
+  color: #fff;
+  background-color: #0e0e0e;
+}
+
+.pressurized-gradient-primary {
+  background: radial-gradient(circle at top left, #859aff, #3e65ff);
 }

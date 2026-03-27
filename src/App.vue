@@ -23,7 +23,7 @@ export default {
     },
     backgroundColor(): CSSProperties {
       return {
-        backgroundColor: (this.$route.meta.backgroundColor as string) ?? 'unset',
+        backgroundColor: (this.$route.meta.backgroundColor as string) ?? '#0e0e0e',
       }
     },
   },
