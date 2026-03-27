@@ -1,0 +1,13 @@
+@import url('./ress.css');
+
+body {
+  --page-background: #fafafa;
+  --light-gray: #c6c6c6;
+  --text-color: #333;
+
+  font-family: sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--text-color);
+  background-color: var(--page-background);
+}

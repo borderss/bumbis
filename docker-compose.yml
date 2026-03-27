@@ -1,0 +1,8 @@
+version: "3"
+services:
+  app:
+    container_name: new_project_app
+    build: .
+    ports:
+      - "80:80"
+    image: vue3_new_project:latest

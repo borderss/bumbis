@@ -1,0 +1,18 @@
+{
+  "name": "new_project",
+  "short_name": "new_project",
+  "start_url": ".",
+  "display": "standalone",
+  "description": "A completely new_project",
+  "icons": [
+    {
+      "src": "images/logo-symbol.png",
+      "sizes": "48x48",
+      "type": "image/png"
+    },
+    {
+      "src": "images/logo-symbol.svg",
+      "sizes": "any"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "stylelint.validate": ["css", "html", "vue"],
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "always",
+    "source.fixAll.stylelint": "always"
+  },
+  "vue3snippets.enable-compile-vue-file-on-did-save-code": false,
+  "vs-code-prettier-eslint.prettierLast": false
+}
