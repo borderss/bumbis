@@ -1,34 +1,12 @@
 <template>
   <div class="min-h-screen flex flex-col bg-surface text-on-surface">
     <!-- TopAppBar -->
-    <header
-      class="bg-[#131313] flex items-center justify-between w-full px-8 py-6 sticky top-0 z-50"
-    >
+    <header class="flex items-center justify-center w-full px-8 py-6 top-0 z-50">
       <div
-        class="font-black tracking-[-0.02em] uppercase text-2xl text-primary"
+        class="font-black tracking-[-0.02em] uppercase text-4xl text-primary text-center"
         style="font-family: 'Plus Jakarta Sans', sans-serif"
       >
         BUMBIS
-      </div>
-      <nav class="hidden md:flex gap-8 items-center">
-        <a
-          class="font-black tracking-tighter uppercase text-primary hover:text-secondary transition-colors cursor-pointer"
-          style="font-family: 'Plus Jakarta Sans', sans-serif"
-          >Pairs</a
-        >
-        <a
-          class="font-black tracking-tighter uppercase text-on-surface hover:text-secondary transition-colors cursor-pointer"
-          style="font-family: 'Plus Jakarta Sans', sans-serif"
-          >History</a
-        >
-        <a
-          class="font-black tracking-tighter uppercase text-on-surface hover:text-secondary transition-colors cursor-pointer"
-          style="font-family: 'Plus Jakarta Sans', sans-serif"
-          >Settings</a
-        >
-      </nav>
-      <div class="flex items-center gap-4">
-        <span class="material-symbols-outlined text-primary text-3xl">account_circle</span>
       </div>
     </header>
 
@@ -48,7 +26,7 @@
             <span
               class="text-3xl font-black tracking-tighter uppercase"
               style="font-family: 'Plus Jakarta Sans', sans-serif"
-              >WHOOPS! WE NEED ANOTHER BALL!</span
+              >WHOOPS! WE NEED ANOTHER BALLER!</span
             >
           </div>
           <span
@@ -66,7 +44,7 @@
             <input
               v-model="newName"
               class="w-full bg-surface-container-high border-none rounded-full py-8 px-10 text-2xl font-bold focus:ring-2 focus:ring-primary-dim transition-all outline-none placeholder:text-outline-variant text-on-surface"
-              placeholder="Add a new name..."
+              placeholder="Add a baller"
               type="text"
             />
             <button
