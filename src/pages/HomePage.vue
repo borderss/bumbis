@@ -55,9 +55,34 @@
             </button>
           </form>
 
-          <div class="space-y-4">
+          <div class="space-y-4 px-2">
             <h2
               class="text-on-surface-variant uppercase font-black tracking-widest text-sm px-4"
+              style="font-family: 'Plus Jakarta Sans', sans-serif"
+            >
+              Default Ballers
+            </h2>
+            <div class="flex flex-wrap gap-3 px-2">
+              <button
+                v-for="name in availableDefaultBallers"
+                :key="name"
+                type="button"
+                class="bg-surface-container-low px-6 py-3 rounded-full text-xl font-extrabold tracking-tight hover:bg-surface-container-high transition-colors"
+                @click="addDefaultPerson(name)"
+              >
+                {{ name }}
+              </button>
+            </div>
+          </div>
+
+          <div class="space-y-4">
+            <h2
+              :class="[
+                roster.length > 0
+                  ? 'bg-gradient-to-r from-yellow-300 via-amber-400 to-yellow-500 bg-clip-text text-transparent'
+                  : 'text-on-surface-variant',
+                'uppercase font-black tracking-widest text-sm px-4',
+              ]"
               style="font-family: 'Plus Jakarta Sans', sans-serif"
             >
               Current Roster
@@ -98,22 +123,37 @@
             <div
               v-for="(pair, index) in pairs"
               :key="index"
-              class="bg-surface-container-low p-8 rounded-xl flex items-center justify-between hover:scale-[1.02] transition-transform shadow-lg"
+              :class="[
+                index === highlightedPairIndex ? 'bg-green-600' : 'bg-surface-container-low',
+                'p-8 rounded-xl flex items-center justify-between hover:scale-[1.02] transition-transform shadow-lg',
+              ]"
             >
               <div class="flex-1 text-center">
                 <p
-                  class="text-2xl font-black text-primary tracking-tight"
+                  :class="[
+                    index === highlightedPairIndex ? 'text-white' : 'text-primary',
+                    'text-2xl font-black tracking-tight',
+                  ]"
                   style="font-family: 'Plus Jakarta Sans', sans-serif"
                 >
                   {{ pair[0].toUpperCase() }}
                 </p>
               </div>
               <div class="px-6">
-                <span class="material-symbols-outlined text-outline-variant text-4xl">link</span>
+                <span
+                  :class="[
+                    index === highlightedPairIndex ? 'text-white' : 'text-outline-variant',
+                    'material-symbols-outlined text-4xl',
+                  ]"
+                  >link</span
+                >
               </div>
               <div class="flex-1 text-center">
                 <p
-                  class="text-2xl font-black text-primary tracking-tight"
+                  :class="[
+                    index === highlightedPairIndex ? 'text-white' : 'text-primary',
+                    'text-2xl font-black tracking-tight',
+                  ]"
                   style="font-family: 'Plus Jakarta Sans', sans-serif"
                 >
                   {{ pair[1].toUpperCase() }}
@@ -187,11 +227,17 @@ import { defineComponent, ref, computed } from 'vue'
 export default defineComponent({
   name: 'HomePage',
   setup() {
+    const defaultBallers = ['Mārcis', 'Linda', 'Emīls', 'Dmitrijs', 'Jēkabs', 'Alberts', 'Eduards']
     const roster = ref<string[]>([])
     const newName = ref('')
     const pairs = ref<[string, string][]>([])
     const soloPerson = ref<string | null>(null)
+    const highlightedPairIndex = ref<number | null>(null)
     const showError = ref(false)
+
+    const availableDefaultBallers = computed(() =>
+      defaultBallers.filter((name) => !roster.value.includes(name)),
+    )
 
     const groupCountLabel = computed(() => {
       const total = pairs.value.length + (soloPerson.value ? 1 : 0)
@@ -204,6 +250,11 @@ export default defineComponent({
       if (roster.value.includes(trimmed)) return
       roster.value.push(trimmed)
       newName.value = ''
+    }
+
+    function addDefaultPerson(name: string) {
+      if (roster.value.includes(name)) return
+      roster.value.push(name)
     }
 
     function removePerson(name: string) {
@@ -234,6 +285,8 @@ export default defineComponent({
 
       pairs.value = newPairs
       soloPerson.value = solo
+      highlightedPairIndex.value =
+        solo === null && newPairs.length > 0 ? Math.floor(Math.random() * newPairs.length) : null
       showError.value = solo !== null
     }
 
@@ -242,9 +295,12 @@ export default defineComponent({
       newName,
       pairs,
       soloPerson,
+      highlightedPairIndex,
       showError,
+      availableDefaultBallers,
       groupCountLabel,
       addPerson,
+      addDefaultPerson,
       removePerson,
       generatePairs,
     }
