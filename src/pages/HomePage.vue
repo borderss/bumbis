@@ -76,11 +76,11 @@
           </div>
 
           <div class="space-y-4">
-              <h2
-                :class="[
-                  roster.length > 0
-                    ? 'bg-gradient-to-r from-yellow-300 via-amber-400 to-yellow-500 bg-clip-text text-transparent'
-                    : 'text-on-surface-variant',
+            <h2
+              :class="[
+                roster.length > 0
+                  ? 'bg-gradient-to-r from-yellow-300 via-amber-400 to-yellow-500 bg-clip-text text-transparent'
+                  : 'text-on-surface-variant',
                 'uppercase font-black tracking-widest text-sm px-4',
               ]"
               style="font-family: 'Plus Jakarta Sans', sans-serif"
