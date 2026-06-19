@@ -164,6 +164,19 @@ app.get('/api/rooms/:id/prediction', (req, res) => {
   res.json({ probabilities })
 })
 
+// Predicted win probability for an ad-hoc set of team lineups (no room needed),
+// e.g. the home-page pair split. Body: { teams: string[][] }. Probabilities are
+// aligned to the input order and sum to 1.
+app.post('/api/predict', (req, res) => {
+  const { teams } = req.body || {}
+  if (!Array.isArray(teams) || teams.length < 2) {
+    return res.status(400).json({ error: 'At least 2 teams required' })
+  }
+  const lineups = teams.map((t) => (Array.isArray(t) ? t.filter((n) => typeof n === 'string') : []))
+  const probabilities = predictWinProbabilities(lineups, getPlayerRatingsMap())
+  res.json({ probabilities })
+})
+
 app.get('/api/rooms/:id/events', (req, res) => {
   const { id } = req.params
   if (!roomExists(id)) return res.status(404).end()
@@ -708,7 +721,7 @@ function startOfTodayMs() {
  * the DB. Used to reconstruct the leaderboard as it stood at a past instant.
  */
 function ratingsAsOf(cutoff) {
-  const state = new Map() // name -> { rating, gamesPlayed, wins, lastPlayedAt }
+  const state = new Map() // name -> { rating, gamesPlayed, wins, winStreak, lastPlayedAt }
   for (const { teams, playedAt } of getResultsForRecalculation()) {
     if (playedAt >= cutoff) break // results come back sorted ascending by time
     const current = new Map()
@@ -716,6 +729,7 @@ function ratingsAsOf(cutoff) {
       current.set(name, {
         rating: decayedRating(r.rating, r.lastPlayedAt, playedAt, graceDaysFor(name)),
         gamesPlayed: r.gamesPlayed,
+        winStreak: r.winStreak,
       })
     }
     const changes = computeEloChanges(teams, current)
@@ -728,6 +742,8 @@ function ratingsAsOf(cutoff) {
         rating: Math.max(RATING_FLOOR, base + delta),
         gamesPlayed: (prev?.gamesPlayed ?? 0) + 1,
         wins: (prev?.wins ?? 0) + (won ? 1 : 0),
+        // Mirror applyEloChanges: extend on a win, reset on any non-win.
+        winStreak: won ? (prev?.winStreak ?? 0) + 1 : 0,
         lastPlayedAt: playedAt,
       })
     }
@@ -737,17 +753,19 @@ function ratingsAsOf(cutoff) {
 
 /**
  * Aggregate goals scored (for) and conceded (against) per named player across
- * all stored results. In multi-team games goals_against is the sum of all
- * opposing teams' scores, not just the highest-scoring opponent.
+ * all stored results. In multi-team games goals_against is the average of the
+ * opposing teams' scores (enemy sum ÷ number of opposing teams), so a 3-team
+ * game is comparable to head-to-head rather than double-counting concessions.
  */
 function computeGoalStats() {
   const stats = new Map()
   for (const { teams } of getResultsForRecalculation()) {
     const totalScore = teams.reduce((sum, t) => sum + t.score, 0)
+    const opponentCount = Math.max(1, teams.length - 1)
     for (const team of teams) {
       const players = resolvePlayers(team)
       if (players.length === 0) continue
-      const goalsAgainst = totalScore - team.score
+      const goalsAgainst = (totalScore - team.score) / opponentCount
       for (const name of players) {
         const s = stats.get(name) ?? { goals_for: 0, goals_against: 0 }
         s.goals_for += team.score

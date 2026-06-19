@@ -170,6 +170,15 @@ try {
 // immediately subject to decay rather than being exempt until their next game.
 db.exec(`UPDATE player_elo SET last_played_at = updated_at WHERE last_played_at IS NULL`)
 
+// Migration: track each player's current consecutive-win streak, used to boost
+// the rating gained on a further win. Recomputed from scratch on every startup
+// rebuild, so the default 0 is only a transient seed.
+try {
+  db.exec(`ALTER TABLE player_elo ADD COLUMN win_streak INTEGER NOT NULL DEFAULT 0`)
+} catch {
+  // Column already exists.
+}
+
 // Migration: forum options added after the table first shipped.
 for (const col of ['dativa INTEGER NOT NULL DEFAULT 0', 'allow_suggestions INTEGER NOT NULL DEFAULT 0']) {
   try {
@@ -221,18 +230,19 @@ const resetRoomStmt = db.prepare(
 const pruneStmt = db.prepare(`DELETE FROM rooms WHERE updated_at < ?`)
 
 const getPlayerEloStmt = db.prepare(
-  `SELECT name, rating, games_played, wins, last_played_at FROM player_elo WHERE name = ?`,
+  `SELECT name, rating, games_played, wins, win_streak, last_played_at FROM player_elo WHERE name = ?`,
 )
 const getAllPlayerEloStmt = db.prepare(
-  `SELECT name, rating, games_played, wins, last_played_at FROM player_elo ORDER BY rating DESC`,
+  `SELECT name, rating, games_played, wins, win_streak, last_played_at FROM player_elo ORDER BY rating DESC`,
 )
 const upsertPlayerEloStmt = db.prepare(`
-  INSERT INTO player_elo (name, rating, games_played, wins, last_played_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?)
+  INSERT INTO player_elo (name, rating, games_played, wins, win_streak, last_played_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(name) DO UPDATE SET
     rating         = excluded.rating,
     games_played   = excluded.games_played,
     wins           = excluded.wins,
+    win_streak     = excluded.win_streak,
     last_played_at = excluded.last_played_at,
     updated_at     = excluded.updated_at
 `)
@@ -360,6 +370,7 @@ export function getPlayerRatingsMap(asOf = Date.now()) {
     map.set(row.name, {
       rating: decayedRating(row.rating, row.last_played_at, asOf, graceDaysFor(row.name)),
       gamesPlayed: row.games_played,
+      winStreak: row.win_streak,
     })
   }
   return map
@@ -444,11 +455,14 @@ export function applyEloChanges(changes, playedAt = Date.now()) {
         : oldRating
       const currentGames = currentRow?.games_played ?? gamesPlayed
       const currentWins = currentRow?.wins ?? 0
+      // Extend the streak on a win, reset it on any non-win (loss or tied-top).
+      const newStreak = won ? (currentRow?.win_streak ?? 0) + 1 : 0
       upsertPlayerEloStmt.run(
         name,
         Math.max(RATING_FLOOR, baseRating + delta),
         currentGames + 1,
         currentWins + (won ? 1 : 0),
+        newStreak,
         playedAt,
         now,
       )

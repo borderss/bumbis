@@ -74,6 +74,15 @@ export function getRoomPrediction(id: string): Promise<{ probabilities: number[]
   return request(`/rooms/${id}/prediction`)
 }
 
+/**
+ * Predicted win probabilities for an ad-hoc set of team lineups (e.g. the
+ * home-page pair split, which has no room), aligned to input order and summing
+ * to 1. Based on player ELO ratings.
+ */
+export function getPrediction(teams: string[][]): Promise<{ probabilities: number[] }> {
+  return request('/predict', { method: 'POST', body: JSON.stringify({ teams }) })
+}
+
 export interface TeamResult {
   name: string
   players: string[]

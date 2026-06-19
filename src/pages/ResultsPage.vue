@@ -388,6 +388,10 @@
               >GF:GA</span
             >
             <span
+              class="hidden sm:block w-14 text-right text-on-surface-variant uppercase font-black tracking-widest text-xs"
+              >AGG</span
+            >
+            <span
               class="w-12 sm:w-14 text-right text-on-surface-variant uppercase font-black tracking-widest text-xs"
               >Today</span
             >
@@ -484,7 +488,14 @@
             <span
               class="hidden sm:block w-20 text-right text-on-surface-variant font-bold text-xs tabular-nums"
             >
-              {{ player.goals_for }}:{{ player.goals_against }}
+              {{ player.goals_for }}:{{ Math.round(player.goals_against) }}
+            </span>
+            <!-- Avg goal gain per game -->
+            <span
+              class="hidden sm:block w-14 text-right font-bold text-xs tabular-nums"
+              :class="gainClass(player)"
+            >
+              {{ signedGain(avgGoalGain(player)) }}
             </span>
             <!-- Today's gain/loss -->
             <span class="w-12 sm:w-14 text-right">
@@ -505,7 +516,7 @@
 
           <p class="text-xs text-on-surface-variant px-4 pt-2">
             Starting ELO: 1200 · GP = games played · W% = win rate · GF:GA = goals scored:conceded ·
-            Today = ELO gained/lost today
+            AGG = avg goal gain per game · Today = ELO gained/lost today
           </p>
         </template>
       </div>
@@ -924,6 +935,18 @@ watch(activeTab, (tab) => {
   if (tab === 'history') loadHistory()
   if (tab === 'rankings') loadRankings()
 })
+
+// Average goal differential per game, derived from the leaderboard's goal totals.
+function avgGoalGain(p: PlayerRanking): number {
+  return p.games_played > 0 ? (p.goals_for - p.goals_against) / p.games_played : 0
+}
+function signedGain(n: number): string {
+  return `${n > 0 ? '+' : ''}${n.toFixed(1)}`
+}
+function gainClass(p: PlayerRanking): string {
+  const g = avgGoalGain(p)
+  return g > 0 ? 'text-green-500' : g < 0 ? 'text-red-500' : 'text-on-surface-variant'
+}
 
 function teamColor(index: number) {
   return teamPalette[index % teamPalette.length]

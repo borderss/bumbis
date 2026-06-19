@@ -180,6 +180,9 @@ export function computeFunFacts(results, leaderboard = []) {
     const monthKey = monthKeyOf(playedAt)
     const wday = weekdayOf(playedAt)
     const maxScore = Math.max(...teams.map((t) => t.score))
+    // Total goals in the game; a team's goals-against is the average of the
+    // opposing teams' scores ((total − own) ÷ opponents), matching computeGoalStats.
+    const totalScore = teams.reduce((s, t) => s + t.score, 0)
 
     // Resolve each team's named roster and pre-game average rating.
     const resolved = teams.map((t) => {
@@ -266,6 +269,9 @@ export function computeFunFacts(results, leaderboard = []) {
           nTeams,
           myScore: team.score,
           oppScore: oppTeam ? oppTeam.score : null,
+          // Average of the opposing teams' scores, so 3-team games (enemy sum ÷ 2)
+          // are comparable to head-to-head rather than double-counting concessions.
+          goalsAgainst: (totalScore - team.score) / Math.max(1, nTeams - 1),
           margin,
           closeGame: nTeams === 2 && oppTeam && Math.abs(margin) === 1,
           oneGoalWin: nTeams === 2 && oppTeam && margin === 1 && won,
@@ -344,6 +350,12 @@ export function computeFunFacts(results, leaderboard = []) {
     const winFlags = games.map((g) => g.won)
     const lossFlags = games.map((g) => g.lost)
 
+    // Average goals scored, conceded, and net gain per game (all games played).
+    const goalsFor = games.reduce((s, g) => s + g.myScore, 0)
+    const goalsAgainst = games.reduce((s, g) => s + g.goalsAgainst, 0)
+    const avgGoalsFor = games.length ? goalsFor / games.length : 0
+    const avgGoalsAgainst = games.length ? goalsAgainst / games.length : 0
+
     // Wins per day & perfect sessions.
     const byDay = new Map()
     for (const g of games) {
@@ -367,6 +379,9 @@ export function computeFunFacts(results, leaderboard = []) {
       longestLossStreak: longestRun(lossFlags),
       currentWinStreak: trailingRun(winFlags),
       currentLossStreak: trailingRun(lossFlags),
+      avgGoalsFor,
+      avgGoalsAgainst,
+      avgGoalGain: avgGoalsFor - avgGoalsAgainst,
       byDay,
       peak: Math.max(...games.map((g) => g.ratingAfter)),
     })
@@ -743,6 +758,9 @@ export function computeFunFacts(results, leaderboard = []) {
       bestTeammate,
       bestWeekday,
       worstWeekday,
+      avgGoalGain: p.avgGoalGain,
+      avgGoalsFor: p.avgGoalsFor,
+      avgGoalsAgainst: p.avgGoalsAgainst,
     }
   }
 
