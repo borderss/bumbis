@@ -516,7 +516,7 @@ const sections = computed<{ title: string; cards: Card[] }[]>(() => {
           g.mostShutoutsDelivered,
           (f) => ({
             name: f.player,
-            detail: `${f.value} clean sheets (X–0)`,
+            detail: `${f.value} clean sheets (all opponents blanked)`,
           }),
         ),
         mk(

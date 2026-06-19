@@ -18,10 +18,12 @@ export const FUNFACT_INFO: Record<string, string> = {
   mostDaysAsChampion: 'The most days ever finishing a play-day as the top-rated player.',
 
   // Dominance & margins
-  mostShutoutsDelivered: 'The most wins where the opponent scored zero (X–0), in 2-team games.',
-  mostTimesShutout: 'The most games scoring zero in a loss (got bageled), in 2-team games.',
-  mostOneGoalWins: 'The most wins by exactly one goal — the photo-finishes — in 2-team games.',
-  biggestBlowout: 'The largest margin of victory in a single head-to-head game.',
+  mostShutoutsDelivered:
+    'The most wins keeping every opponent scoreless (a clean sheet) — in 2- and 3-team games.',
+  mostTimesShutout: 'The most games scoring zero in a loss (got bageled) — in 2- and 3-team games.',
+  mostOneGoalWins:
+    'The most wins by exactly one goal over the next-best team — the photo-finishes — in 2- or 3-team games.',
+  biggestBlowout: 'The largest margin of victory over the runner-up in a single game — any format.',
 
   // Goals & scoring
   sharpshooter: 'The highest average goals scored per game (min 8 games).',
@@ -67,7 +69,7 @@ export const FUNFACT_INFO: Record<string, string> = {
 
   // Quirky
   comebackKing:
-    'The most wins in the game immediately after a heavy loss (lost by 5+). Only final scores are stored, so a blow-out stands in for “trailing badly”.',
+    'The most wins in the game immediately after a heavy loss (lost by 5+ to the leaders). Only final scores are stored, so a blow-out stands in for “trailing badly”.',
   clutch: 'The best win rate in nail-biters decided by a single goal (min 4 such games).',
   choker: 'The worst win rate in those same one-goal games (min 4).',
   bounceBack: 'Win rate in the very next game after a loss — how well they recover.',

@@ -260,6 +260,10 @@ export function computeFunFacts(results, leaderboard = []) {
       // Two-team margin context (margin facts only make sense head-to-head).
       const oppTeam = nTeams === 2 ? resolved[1 - i] : null
       const margin = oppTeam ? team.score - oppTeam.score : null
+      // Highest score among the other teams — lets us spot a one-goal win in any
+      // format (2- or 3-team), where the winner edged the runner-up by a goal.
+      const otherScores = resolved.filter((_, j) => j !== i).map((t) => t.score)
+      const bestOtherScore = otherScores.length ? Math.max(...otherScores) : null
 
       for (const name of team.players) {
         const change = changes.get(name)
@@ -284,11 +288,14 @@ export function computeFunFacts(results, leaderboard = []) {
           // are comparable to head-to-head rather than double-counting concessions.
           goalsAgainst: (totalScore - team.score) / Math.max(1, nTeams - 1),
           margin,
-          closeGame: nTeams === 2 && oppTeam && Math.abs(margin) === 1,
-          oneGoalWin: nTeams === 2 && oppTeam && margin === 1 && won,
-          shutoutFor: nTeams === 2 && won && oppTeam.score === 0,
-          shutoutAgainst: nTeams === 2 && lost && team.score === 0,
-          heavyLoss: nTeams === 2 && lost && oppTeam.score - team.score >= HEAVY_MARGIN,
+          // Close / one-goal / heavy / shutout facts compare against the
+          // best other team, so they hold for 2- and 3-team games alike.
+          closeGame: bestOtherScore !== null && Math.abs(team.score - bestOtherScore) === 1,
+          oneGoalWin: won && bestOtherScore !== null && team.score - bestOtherScore === 1,
+          // A clean sheet = every opposing team scored zero (totalScore − own === 0).
+          shutoutFor: won && totalScore - team.score === 0,
+          shutoutAgainst: lost && team.score === 0,
+          heavyLoss: lost && bestOtherScore !== null && bestOtherScore - team.score >= HEAVY_MARGIN,
           myAvgBefore: team.avgBefore,
           oppAvgBefore,
           ratingBefore: before,
@@ -336,17 +343,20 @@ export function computeFunFacts(results, leaderboard = []) {
       }
     }
 
-    // ----- Biggest blowout (largest goal margin in a head-to-head game) -----
-    if (nTeams === 2) {
-      const winT = resolved[0].score >= resolved[1].score ? resolved[0] : resolved[1]
-      const loseT = winT === resolved[0] ? resolved[1] : resolved[0]
-      const bMargin = winT.score - loseT.score
-      if (bMargin > 0 && winT.players.length > 0 && (!biggestBlowout || bMargin > biggestBlowout.margin)) {
+    // ----- Biggest blowout (largest margin over the runner-up, any format) -----
+    // Needs a single clear winner; the "losers" shown are the runner-up team.
+    const blowoutWinners = resolved.filter((t) => t.isMax && t.players.length > 0)
+    if (blowoutWinners.length === 1) {
+      const winT = blowoutWinners[0]
+      const others = resolved.filter((t) => t !== winT)
+      const runnerUp = others.reduce((m, t) => (t.score > m.score ? t : m), others[0])
+      const bMargin = winT.score - runnerUp.score
+      if (bMargin > 0 && (!biggestBlowout || bMargin > biggestBlowout.margin)) {
         biggestBlowout = {
           winners: winT.players.slice(),
-          losers: loseT.players.slice(),
+          losers: runnerUp.players.slice(),
           margin: bMargin,
-          score: `${winT.score}–${loseT.score}`,
+          score: `${winT.score}–${runnerUp.score}`,
           at: playedAt,
         }
       }
