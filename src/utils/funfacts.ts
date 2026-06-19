@@ -126,6 +126,17 @@ export interface VarianceRecord {
   value: number
   days: number
 }
+export interface ScoringRecord {
+  player: string
+  value: number
+  games: number
+}
+export interface Blowout {
+  winners: string[]
+  losers: string[]
+  margin: number
+  score: string
+}
 
 export interface GlobalFacts {
   // Streaks & runs
@@ -141,6 +152,7 @@ export interface GlobalFacts {
   mostShutoutsDelivered: PlayerValue | null
   mostTimesShutout: PlayerValue | null
   mostOneGoalWins: PlayerValue | null
+  biggestBlowout: Blowout | null
   // MVP & titles
   weeklyMvp: WeeklyMvp | null
   mostMvpTitles: PlayerValue | null
@@ -165,6 +177,11 @@ export interface GlobalFacts {
   mostGames: PlayerValue | null
   highestWinRate: WinRateRecord | null
   mostBalanced: WinRateRecord | null
+  // Goals & scoring
+  sharpshooter: ScoringRecord | null
+  ironWall: ScoringRecord | null
+  goalDiffKing: ScoringRecord | null
+  mostGoalsScored: PlayerValue | null
   // Quirky
   comebackKing: PlayerValue | null
   clutch: RecordWithGames | null
@@ -226,9 +243,18 @@ export interface PlayerTag {
   key: string
 }
 
+export interface GlobalSummary {
+  games: number
+  players: number
+  sessions: number
+  totalGoals: number
+  avgGoalsPerGame: number
+}
+
 export interface FunFacts {
   generatedAt: number
   totalGames: number
+  summary: GlobalSummary
   players: { name: string; games: number }[]
   global: GlobalFacts
   byPlayer: Record<string, PlayerFacts>

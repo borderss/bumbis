@@ -35,6 +35,7 @@ const MIN_GAMES_CLOSE = 4 // clutch / choker
 const MIN_GAMES_TIER = 4 // giant killer / flat-track bully
 const MIN_GAMES_BOUNCE = 4 // bounce-back / tilt
 const MIN_GAMES_WEEKDAY = 3 // lucky / cursed weekday (per player, per weekday)
+const MIN_GAMES_SCORING = 8 // sharpshooter / iron wall / goal-difference king
 const PERFECT_MIN_GAMES = 3 // a "perfect session" needs at least this many wins
 const MVP_MIN_GAMES = 2 // games in a week to be eligible for weekly MVP
 const MIN_WEEKS_MVP_RATE = 3 // weeks participated for "highest MVP rate"
@@ -79,6 +80,9 @@ function avg(nums) {
 }
 function round(n) {
   return Math.round(n)
+}
+function round1(n) {
+  return Math.round(n * 10) / 10
 }
 function winRate(wins, games) {
   return games > 0 ? wins / games : 0
@@ -138,7 +142,12 @@ export function computeFunFacts(results, leaderboard = []) {
   let biggestGain = null // { player, delta, rating, at }
   let hardestFall = null // { player, delta, rating, at }
   let biggestUpset = null // { winners, losers, gap, at, score }
+  let biggestBlowout = null // { winners, losers, margin, score, at }
   const monthClimb = new Map() // `${name}|${month}` -> { name, month, first, last }
+
+  // Global aggregate counters (summed across every counted game).
+  let totalGoals = 0 // every team's score in every game
+  let countedGames = 0 // games that contributed (valid teams + trackable players)
 
   // Daily champion ladder.
   const dayOrder = [] // unique day keys in chronological order
@@ -183,6 +192,8 @@ export function computeFunFacts(results, leaderboard = []) {
     // Total goals in the game; a team's goals-against is the average of the
     // opposing teams' scores ((total − own) ÷ opponents), matching computeGoalStats.
     const totalScore = teams.reduce((s, t) => s + t.score, 0)
+    totalGoals += totalScore
+    countedGames += 1
 
     // Resolve each team's named roster and pre-game average rating.
     const resolved = teams.map((t) => {
@@ -325,6 +336,22 @@ export function computeFunFacts(results, leaderboard = []) {
       }
     }
 
+    // ----- Biggest blowout (largest goal margin in a head-to-head game) -----
+    if (nTeams === 2) {
+      const winT = resolved[0].score >= resolved[1].score ? resolved[0] : resolved[1]
+      const loseT = winT === resolved[0] ? resolved[1] : resolved[0]
+      const bMargin = winT.score - loseT.score
+      if (bMargin > 0 && winT.players.length > 0 && (!biggestBlowout || bMargin > biggestBlowout.margin)) {
+        biggestBlowout = {
+          winners: winT.players.slice(),
+          losers: loseT.players.slice(),
+          margin: bMargin,
+          score: `${winT.score}–${loseT.score}`,
+          at: playedAt,
+        }
+      }
+    }
+
     // ----- Apply ELO changes to the running (no-decay) ratings -----
     for (const [name, change] of changes) {
       const info = running.get(name) ?? { rating: change.oldRating, gamesPlayed: 0, wins: 0 }
@@ -382,6 +409,8 @@ export function computeFunFacts(results, leaderboard = []) {
       avgGoalsFor,
       avgGoalsAgainst,
       avgGoalGain: avgGoalsFor - avgGoalsAgainst,
+      goalsForTotal: goalsFor,
+      goalsAgainstTotal: goalsAgainst,
       byDay,
       peak: Math.max(...games.map((g) => g.ratingAfter)),
     })
@@ -464,6 +493,23 @@ export function computeFunFacts(results, leaderboard = []) {
     const p = perPlayer.get(n)
     return { value: -Math.abs(p.winRate - 0.5), detail: { winRate: p.winRate, games: p.total } }
   })
+
+  // --- Goals & scoring ---
+  const eligibleScoring = players.filter((n) => perPlayer.get(n).total >= MIN_GAMES_SCORING)
+  const sharpshooter = bestOfDetailed(eligibleScoring, (n) => {
+    const p = perPlayer.get(n)
+    return { value: p.avgGoalsFor, detail: { value: round1(p.avgGoalsFor), games: p.total } }
+  })
+  // Rank on the negated concession rate so the lowest average wins.
+  const ironWall = bestOfDetailed(eligibleScoring, (n) => {
+    const p = perPlayer.get(n)
+    return { value: -p.avgGoalsAgainst, detail: { value: round1(p.avgGoalsAgainst), games: p.total } }
+  })
+  const goalDiffKing = bestOfDetailed(eligibleScoring, (n) => {
+    const p = perPlayer.get(n)
+    return { value: p.avgGoalGain, detail: { value: round1(p.avgGoalGain), games: p.total } }
+  })
+  const mostGoalsScored = bestOf(players, (n) => round(perPlayer.get(n).goalsForTotal), 1)
 
   // --- Rivalries & H2H ---
   let biggestRivalry = null
@@ -783,6 +829,14 @@ export function computeFunFacts(results, leaderboard = []) {
     mostShutoutsDelivered,
     mostTimesShutout,
     mostOneGoalWins,
+    biggestBlowout: biggestBlowout
+      ? {
+          winners: biggestBlowout.winners,
+          losers: biggestBlowout.losers,
+          margin: biggestBlowout.margin,
+          score: biggestBlowout.score,
+        }
+      : null,
     // MVP & titles
     weeklyMvp: mvp.latest,
     mostMvpTitles: mvp.mostTitles,
@@ -828,6 +882,11 @@ export function computeFunFacts(results, leaderboard = []) {
     mostGames,
     highestWinRate,
     mostBalanced,
+    // Goals & scoring
+    sharpshooter,
+    ironWall,
+    goalDiffKing,
+    mostGoalsScored,
     // Quirky
     comebackKing: comebackKing && comebackKing.value > 0 ? comebackKing : null,
     clutch,
@@ -839,11 +898,21 @@ export function computeFunFacts(results, leaderboard = []) {
     jekyllHyde,
   }
 
+  // Headline aggregates across the whole dataset (shown above the records).
+  const summary = {
+    games: countedGames,
+    players: players.length,
+    sessions: dayOrder.length,
+    totalGoals: round(totalGoals),
+    avgGoalsPerGame: countedGames ? Math.round((totalGoals / countedGames) * 10) / 10 : 0,
+  }
+
   const tags = computePlayerTags(global, byPlayer, players)
 
   return {
     generatedAt: now,
     totalGames: results.length,
+    summary,
     players: playerList,
     global,
     byPlayer,
@@ -903,6 +972,12 @@ function computePlayerTags(g, byPlayer, players) {
       '🧱',
       `${g.mostShutoutsDelivered.value} shutouts`,
     )
+  if (g.sharpshooter) set(g.sharpshooter.player, 'sharpshooter', '⚽', 'Sharpshooter')
+  if (g.ironWall) set(g.ironWall.player, 'ironWall', '🧤', 'Iron Wall')
+  if (g.mostGoalsScored)
+    set(g.mostGoalsScored.player, 'mostGoalsScored', '🥅', `${g.mostGoalsScored.value} goals`)
+  if (g.biggestBlowout)
+    for (const n of g.biggestBlowout.winners) set(n, 'biggestBlowout', '💥', 'Demolition')
   if (g.kingmaker) set(g.kingmaker.player, 'kingmaker', '✨', 'Kingmaker')
   if (g.currentWinStreak) set(g.currentWinStreak.player, 'currentWinStreak', '🌶️', 'On Fire')
   if (g.mostWinsInDay) set(g.mostWinsInDay.player, 'mostWinsInDay', '☀️', 'Session Hero')
