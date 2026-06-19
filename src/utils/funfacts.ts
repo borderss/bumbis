@@ -214,6 +214,9 @@ export interface PlayerFacts {
   bestTeammate: TeammateRecord | null
   bestWeekday: WeekdayRecord | null
   worstWeekday: WeekdayRecord | null
+  avgGoalGain: number
+  avgGoalsFor: number
+  avgGoalsAgainst: number
 }
 
 export interface PlayerTag {

@@ -223,39 +223,76 @@
               :key="index"
               :class="[
                 index === highlightedPairIndex ? 'bg-green-600' : 'bg-surface-container-low',
-                'p-8 rounded-xl flex items-center justify-between hover:scale-[1.02] transition-transform shadow-lg',
+                'p-8 rounded-xl flex flex-col gap-5 hover:scale-[1.02] transition-transform shadow-lg',
               ]"
             >
-              <div class="flex-1 text-center">
-                <p
-                  :class="[
-                    index === highlightedPairIndex ? 'text-white' : 'text-primary',
-                    'text-2xl font-black tracking-tight',
-                  ]"
-                  style="font-family: 'Plus Jakarta Sans', sans-serif"
-                >
-                  {{ pair[0].toUpperCase() }}
-                </p>
+              <div class="flex items-center justify-between w-full">
+                <div class="flex-1 text-center">
+                  <p
+                    :class="[
+                      index === highlightedPairIndex ? 'text-white' : 'text-primary',
+                      'text-2xl font-black tracking-tight',
+                    ]"
+                    style="font-family: 'Plus Jakarta Sans', sans-serif"
+                  >
+                    {{ pair[0].toUpperCase() }}
+                  </p>
+                </div>
+                <div class="px-6">
+                  <span
+                    :class="[
+                      index === highlightedPairIndex ? 'text-white' : 'text-outline-variant',
+                      'material-symbols-outlined text-4xl',
+                    ]"
+                    >link</span
+                  >
+                </div>
+                <div class="flex-1 text-center">
+                  <p
+                    :class="[
+                      index === highlightedPairIndex ? 'text-white' : 'text-primary',
+                      'text-2xl font-black tracking-tight',
+                    ]"
+                    style="font-family: 'Plus Jakarta Sans', sans-serif"
+                  >
+                    {{ pair[1].toUpperCase() }}
+                  </p>
+                </div>
               </div>
-              <div class="px-6">
-                <span
+
+              <!-- ELO win prediction -->
+              <div v-if="pairWinPct(index) !== null" class="w-full">
+                <div class="flex items-center justify-between mb-1.5">
+                  <span
+                    :class="[
+                      index === highlightedPairIndex ? 'text-white/80' : 'text-on-surface-variant',
+                      'text-xs uppercase font-black tracking-widest',
+                    ]"
+                    >Win chance</span
+                  >
+                  <span
+                    :class="[
+                      index === highlightedPairIndex ? 'text-white' : 'text-on-surface',
+                      'text-sm font-black',
+                    ]"
+                    >{{ pairWinPct(index) }}%</span
+                  >
+                </div>
+                <div
                   :class="[
-                    index === highlightedPairIndex ? 'text-white' : 'text-outline-variant',
-                    'material-symbols-outlined text-4xl',
+                    index === highlightedPairIndex ? 'bg-white/25' : 'bg-surface-container-high',
+                    'h-2 rounded-full overflow-hidden',
                   ]"
-                  >link</span
                 >
-              </div>
-              <div class="flex-1 text-center">
-                <p
-                  :class="[
-                    index === highlightedPairIndex ? 'text-white' : 'text-primary',
-                    'text-2xl font-black tracking-tight',
-                  ]"
-                  style="font-family: 'Plus Jakarta Sans', sans-serif"
-                >
-                  {{ pair[1].toUpperCase() }}
-                </p>
+                  <div
+                    class="h-full rounded-full transition-all duration-500"
+                    :style="{
+                      width: `${pairWinPct(index)}%`,
+                      backgroundColor:
+                        index === highlightedPairIndex ? '#ffffff' : teamColor(index),
+                    }"
+                  />
+                </div>
               </div>
             </div>
             <!-- Solo Card (Odd Number) -->
@@ -337,7 +374,7 @@
 
 <script lang="ts">
 import { pairDefaultBallers } from '@/utils/defaultBallers'
-import { createRoom } from '@/utils/matchmaking'
+import { createRoom, getPrediction } from '@/utils/matchmaking'
 import { createWheel } from '@/utils/wheel'
 import { computed, defineComponent, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
@@ -358,6 +395,33 @@ export default defineComponent({
     const soloPerson = ref<string | null>(null)
     const highlightedPairIndex = ref<number | null>(null)
     const showError = ref(false)
+
+    // ELO-based win prediction for the generated pairs, aligned to pair order.
+    const pairPrediction = ref<number[]>([])
+    const teamPalette = ['#97a9ff', '#ff7162', '#9BDA62', '#5F5FED', '#ffb347', '#2ec4b6']
+    let predictionSeq = 0
+
+    function teamColor(index: number) {
+      return teamPalette[index % teamPalette.length]
+    }
+    function pairWinPct(index: number): number | null {
+      const p = pairPrediction.value[index]
+      return p === undefined ? null : Math.round(p * 100)
+    }
+    async function loadPairPrediction() {
+      const teams = pairs.value.map((p) => [...p])
+      if (teams.length < 2) {
+        pairPrediction.value = []
+        return
+      }
+      const seq = ++predictionSeq
+      try {
+        const { probabilities } = await getPrediction(teams)
+        if (seq === predictionSeq) pairPrediction.value = probabilities
+      } catch {
+        if (seq === predictionSeq) pairPrediction.value = []
+      }
+    }
 
     const availableDefaultBallers = computed(() =>
       pairDefaultBallers.filter((name) => !roster.value.includes(name)),
@@ -450,6 +514,7 @@ export default defineComponent({
       highlightedPairIndex.value =
         solo === null && newPairs.length > 0 ? Math.floor(Math.random() * newPairs.length) : null
       showError.value = solo !== null
+      loadPairPrediction()
     }
 
     return {
@@ -472,6 +537,8 @@ export default defineComponent({
       removePerson,
       generatePairs,
       logPairResults,
+      pairWinPct,
+      teamColor,
     }
   },
 })

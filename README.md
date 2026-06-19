@@ -131,10 +131,29 @@ A solo player who beats a duo earns a large rating gain (high MoV + underdog acf
 | Games played | K |
 |---|---|
 | < 10 (provisional) | 120 |
-| 10 – 29 | 90 |
-| 30 + | 60 |
+| 10 + | 90 |
 
 New players have high K so initial placements settle quickly. No provisional rating penalty is applied — the K schedule alone handles new-player uncertainty.
+
+### Win-streak bonus
+
+A player on a hot streak earns **extra** rating on each further win. The bonus scales with the streak carried *into* the game, so the **second** consecutive win is the first to be boosted:
+
+```
+streak_mult = 1 + min(STREAK_BONUS_MAX, STREAK_BONUS_PER_WIN × prior_streak)
+delta_winner = streak_mult × K × average over opponents of (mov × acf × (S − E))
+```
+
+`STREAK_BONUS_PER_WIN = 0.10` (+10% per prior consecutive win) and `STREAK_BONUS_MAX = 0.50` (capped at +50%, reached at a 5-win streak).
+
+| Prior streak | Multiplier |
+|---|---|
+| 0 (first win) | 1.00 |
+| 1 | 1.10 |
+| 2 | 1.20 |
+| 5+ | 1.50 |
+
+Only the **winner's** gain is amplified — the opponent's loss is unchanged, so streaks inject points (the system is already non-zero-sum). Any non-win — a loss *or* a tied-top result — resets the streak to zero, matching the `currentWinStreak` definition used by the fun facts. The streak is stored per player (`player_elo.win_streak`) and, like all ratings, recomputed from scratch when the server replays results on startup.
 
 ### Handling the "best player with worst player" case
 

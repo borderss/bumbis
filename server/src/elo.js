@@ -32,7 +32,7 @@ const _require = createRequire(import.meta.url)
  *    K × mov × acf × (S − E) over all opponents.
  *
  * 4. Individual K-factor progression
- *    K=120 (< 10 games) → K=90 (10-29) → K=60 (30+)
+ *    K=120 (< 10 games) → K=90 (10+)
  *
  * 5. Starting ratings
  *    Default ballers: INITIAL_RATING = 1200.  Everyone else: NON_BALLER_INITIAL_RATING = 1000.
@@ -42,11 +42,32 @@ const _require = createRequire(import.meta.url)
  *    `won = true` only when one team's score is the unique maximum.
  *    Tied-at-top results record no win for any team; all-zero-score games are
  *    rejected (400 from the API; empty Map from computeEloChanges for legacy replay).
+ *
+ * 7. Win-streak bonus
+ *    A player riding a win streak gains extra rating on their next win. The
+ *    bonus scales with the streak they carried INTO the game, so the second
+ *    consecutive win is the first to be boosted: delta ×= 1 + min(MAX,
+ *    PER_WIN × priorStreak). Only the winner's gain is amplified (the system is
+ *    already non-zero-sum), and any non-win — loss or tied-top — resets the
+ *    streak to zero, matching the funfacts `currentWinStreak` definition.
  */
 
 export const INITIAL_RATING = 1200 // starting rating for default ballers / unknown opponents
 export const NON_BALLER_INITIAL_RATING = 1000 // newcomers outside the regular roster start lower
 export const SIZE_HANDICAP = 150 // additive eff-rating bonus per extra teammate vs the specific opponent
+
+// --- Win-streak bonus ---------------------------------------------------------
+// Players on a hot streak earn extra rating on each further win. The multiplier
+// is keyed off the streak carried INTO the game, so the 2nd win in a row is the
+// first to be boosted. Only the winner's positive delta is scaled.
+export const STREAK_BONUS_PER_WIN = 0.1 // +10% delta per prior consecutive win
+export const STREAK_BONUS_MAX = 0.5 // capped at +50% (reached at a 5-win streak)
+
+/** Multiplier applied to a winner's delta given the streak they brought in. */
+export function streakBonusMultiplier(priorStreak) {
+  if (!priorStreak || priorStreak < 1) return 1
+  return 1 + Math.min(STREAK_BONUS_MAX, STREAK_BONUS_PER_WIN * priorStreak)
+}
 
 // --- Inactivity decay ---------------------------------------------------------
 // Players lose rating for every full day they don't play, once a grace period
@@ -91,8 +112,7 @@ export function decayedRating(rating, lastPlayedAt, asOf, graceDays = DECAY_GRAC
 
 export function kFactor(gamesPlayed) {
   if (gamesPlayed < 10) return 120
-  if (gamesPlayed < 30) return 90
-  return 60
+  return 90
 }
 
 /**
@@ -235,10 +255,13 @@ export function computeEloChanges(teams, currentRatings) {
     const pairwiseDelta = pairwiseSum / (n - 1)
 
     for (const name of teamA.players) {
-      const gp = currentRatings.get(name)?.gamesPlayed ?? 0
+      const entry = currentRatings.get(name)
+      const gp = entry?.gamesPlayed ?? 0
+      // Only winners are boosted; the bonus uses the streak carried into the game.
+      const streakMult = teamA.won ? streakBonusMultiplier(entry?.winStreak ?? 0) : 1
       changes.set(name, {
-        delta: kFactor(gp) * pairwiseDelta,
-        oldRating: currentRatings.get(name)?.rating ?? initialRatingFor(name),
+        delta: kFactor(gp) * pairwiseDelta * streakMult,
+        oldRating: entry?.rating ?? initialRatingFor(name),
         won: teamA.won,
         gamesPlayed: gp,
       })

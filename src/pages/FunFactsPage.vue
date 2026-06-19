@@ -342,6 +342,9 @@ function pct(n: number): string {
 function signed(n: number): string {
   return `${n > 0 ? '+' : ''}${n}`
 }
+function signedDec(n: number): string {
+  return `${n > 0 ? '+' : ''}${n.toFixed(1)}`
+}
 function signedPts(n: number): string {
   const v = Math.round(n * 100)
   return `${v > 0 ? '+' : ''}${v} pts`
@@ -700,6 +703,12 @@ const spotlightTiles = computed<Tile[]>(() => {
   return [
     { label: 'Games', value: `${s.games}` },
     { label: 'Win Rate', value: pct(s.winRate), sub: `${s.wins}W · ${s.losses}L` },
+    {
+      label: 'Avg Goal Gain',
+      value: signedDec(s.avgGoalGain),
+      sub: `${s.avgGoalsFor.toFixed(1)} for · ${s.avgGoalsAgainst.toFixed(1)} against`,
+      tone: s.avgGoalGain < 0 ? 'bad' : undefined,
+    },
     { label: 'Peak ELO', value: `${s.peakElo}` },
     { label: 'Current Streak', value: streak.value, tone: streak.tone },
     { label: 'Best Win Streak', value: `${s.longestWinStreak}` },
