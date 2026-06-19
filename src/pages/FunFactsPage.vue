@@ -222,7 +222,13 @@
                 </p>
                 <p
                   class="text-xl font-black tracking-tight mt-1"
-                  :class="tile.tone === 'bad' ? 'text-secondary' : 'text-on-surface'"
+                  :class="
+                    tile.tone === 'good'
+                      ? 'text-green-400'
+                      : tile.tone === 'bad'
+                        ? 'text-secondary'
+                        : 'text-on-surface'
+                  "
                   style="font-family: 'Plus Jakarta Sans', sans-serif"
                 >
                   {{ tile.value }}
@@ -235,7 +241,46 @@
           </template>
         </section>
 
-        <!-- ── Record sections ─────────────────────────────────────────── -->
+        <!-- ── Divider: player spotlight → all-time global records ──────── -->
+        <div class="flex items-center gap-4 my-12 px-2">
+          <div class="h-px flex-grow bg-gradient-to-r from-transparent to-outline-variant/50" />
+          <div
+            class="flex items-center gap-2 rounded-full bg-surface-container-high px-6 py-3 shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
+          >
+            <span
+              class="material-symbols-outlined text-primary text-xl"
+              style="font-variation-settings: 'FILL' 1"
+              >public</span
+            >
+            <span class="uppercase font-black tracking-widest text-xs text-on-surface">
+              All-Time Records
+            </span>
+          </div>
+          <div class="h-px flex-grow bg-gradient-to-l from-transparent to-outline-variant/50" />
+        </div>
+
+        <!-- ── Global headline stats ───────────────────────────────────── -->
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-12">
+          <div
+            v-for="stat in summaryStats"
+            :key="stat.label"
+            class="bg-surface-container-low rounded-2xl px-5 py-5 text-center shadow-[0_10px_30px_rgba(0,0,0,0.2)]"
+          >
+            <p
+              class="text-3xl font-black tracking-tight text-on-surface"
+              style="font-family: 'Plus Jakarta Sans', sans-serif"
+            >
+              {{ stat.value }}
+            </p>
+            <p
+              class="uppercase font-black tracking-widest text-[0.65rem] text-on-surface-variant mt-1"
+            >
+              {{ stat.label }}
+            </p>
+          </div>
+        </div>
+
+        <!-- ── Record sections (global, not player-specific) ───────────── -->
         <section v-for="section in sections" :key="section.title" class="mb-12">
           <h2
             class="text-2xl font-black tracking-tight mb-5 px-2"
@@ -285,8 +330,8 @@
         </section>
 
         <p class="text-xs text-on-surface-variant px-4 pt-2">
-          Based on {{ facts.totalGames }} logged games. Records with a minimum-games threshold only
-          appear once enough games are played.
+          Based on {{ facts.summary.games }} logged games. Records with a minimum-games threshold
+          only appear once enough games are played.
         </p>
       </template>
     </main>
@@ -334,6 +379,19 @@ onMounted(async () => {
 const spotlight = computed<PlayerFacts | null>(() =>
   facts.value && selectedPlayer.value ? facts.value.byPlayer[selectedPlayer.value] ?? null : null,
 )
+
+// Headline aggregates shown under the "All-Time Records" divider.
+const summaryStats = computed<{ label: string; value: string }[]>(() => {
+  const s = facts.value?.summary
+  if (!s) return []
+  return [
+    { label: 'Games Played', value: `${s.games}` },
+    { label: 'Total Goals', value: s.totalGoals.toLocaleString() },
+    { label: 'Avg Goals / Game', value: s.avgGoalsPerGame.toFixed(1) },
+    { label: 'Players', value: `${s.players}` },
+    { label: 'Sessions', value: `${s.sessions}` },
+  ]
+})
 
 // --- Formatting helpers -------------------------------------------------------
 function pct(n: number): string {
@@ -475,6 +533,45 @@ const sections = computed<{ title: string; cards: Card[] }[]>(() => {
         mk('mostOneGoalWins', 'Most Photo-Finishes', 'flash_on', g.mostOneGoalWins, (f) => ({
           name: f.player,
           detail: `${f.value} one-goal wins`,
+        })),
+        mk(
+          'biggestBlowout',
+          'Biggest Blowout',
+          'explosion',
+          g.biggestBlowout,
+          (f) => ({
+            name: f.winners.join(' & '),
+            detail: `beat ${f.losers.join(' & ')} ${f.score} (+${f.margin})`,
+          }),
+          'neutral',
+        ),
+      ],
+    },
+    {
+      title: 'Goals & Scoring',
+      cards: [
+        mk('sharpshooter', 'Sharpshooter', 'sports_soccer', g.sharpshooter, (f) => ({
+          name: f.player,
+          detail: `${f.value.toFixed(1)} goals/game (${f.games} games)`,
+        })),
+        mk(
+          'ironWall',
+          'Iron Wall',
+          'shield',
+          g.ironWall,
+          (f) => ({
+            name: f.player,
+            detail: `${f.value.toFixed(1)} conceded/game (${f.games} games)`,
+          }),
+          'neutral',
+        ),
+        mk('goalDiffKing', 'Goal-Difference King', 'exposure', g.goalDiffKing, (f) => ({
+          name: f.player,
+          detail: `${signedDec(f.value)} goal diff/game (${f.games} games)`,
+        })),
+        mk('mostGoalsScored', 'Top Scorer', 'scoreboard', g.mostGoalsScored, (f) => ({
+          name: f.player,
+          detail: `${f.value} goals scored all-time`,
         })),
       ],
     },
@@ -707,7 +804,7 @@ const spotlightTiles = computed<Tile[]>(() => {
       label: 'Avg Goal Gain',
       value: signedDec(s.avgGoalGain),
       sub: `${s.avgGoalsFor.toFixed(1)} for · ${s.avgGoalsAgainst.toFixed(1)} against`,
-      tone: s.avgGoalGain < 0 ? 'bad' : undefined,
+      tone: s.avgGoalGain > 0 ? 'good' : s.avgGoalGain < 0 ? 'bad' : undefined,
     },
     { label: 'Peak ELO', value: `${s.peakElo}` },
     { label: 'Current Streak', value: streak.value, tone: streak.tone },

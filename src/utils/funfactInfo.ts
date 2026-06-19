@@ -21,6 +21,14 @@ export const FUNFACT_INFO: Record<string, string> = {
   mostShutoutsDelivered: 'The most wins where the opponent scored zero (X–0), in 2-team games.',
   mostTimesShutout: 'The most games scoring zero in a loss (got bageled), in 2-team games.',
   mostOneGoalWins: 'The most wins by exactly one goal — the photo-finishes — in 2-team games.',
+  biggestBlowout: 'The largest margin of victory in a single head-to-head game.',
+
+  // Goals & scoring
+  sharpshooter: 'The highest average goals scored per game (min 8 games).',
+  ironWall: 'The fewest average goals conceded per game (min 8 games).',
+  goalDiffKing:
+    'The best average goal difference per game — goals scored minus conceded (min 8 games).',
+  mostGoalsScored: 'The most goals scored in total across all games.',
 
   // MVP & titles
   weeklyMvp:
