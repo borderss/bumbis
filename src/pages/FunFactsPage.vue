@@ -37,6 +37,29 @@
         </div>
       </div>
 
+      <!-- Game-format filter (stays visible across loading/empty states) -->
+      <div
+        role="group"
+        aria-label="Filter fun facts by game format"
+        class="flex gap-2 bg-surface-container rounded-full p-1.5 mb-8 max-w-md mx-auto"
+      >
+        <button
+          v-for="m in modeOptions"
+          :key="m.id"
+          type="button"
+          :aria-pressed="mode === m.id"
+          :class="[
+            mode === m.id
+              ? 'bg-primary text-on-primary'
+              : 'text-on-surface-variant hover:bg-surface-container-high',
+            'flex-1 py-3 rounded-full font-extrabold uppercase tracking-wide text-sm transition-colors',
+          ]"
+          @click="setMode(m.id)"
+        >
+          {{ m.label }}
+        </button>
+      </div>
+
       <!-- Loading / error / empty -->
       <div v-if="loading" class="text-on-surface-variant text-lg font-medium px-2">
         Crunching the numbers…
@@ -48,7 +71,7 @@
       >
         <span class="material-symbols-outlined text-6xl text-outline-variant">insights</span>
         <p class="text-on-surface-variant font-bold mt-4">
-          No games logged yet — fun facts appear once you start playing.
+          {{ emptyMessage }}
         </p>
       </div>
 
@@ -347,7 +370,7 @@
 </template>
 
 <script setup lang="ts">
-import { type FunFacts, type PlayerFacts, getFunFacts } from '@/utils/funfacts'
+import { type FunFacts, type FunFactsMode, type PlayerFacts, getFunFacts } from '@/utils/funfacts'
 import { FUNFACT_INFO } from '@/utils/funfactInfo'
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
@@ -357,6 +380,22 @@ const loading = ref(true)
 const error = ref('')
 const selectedPlayer = ref<string>('')
 
+// Game-format filter — every record and summary stat recomputes for the chosen
+// format (the server replays only the matching games).
+const mode = ref<FunFactsMode>('all')
+const modeOptions: { id: FunFactsMode; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: '2team', label: '2-Team' },
+  { id: '3team', label: '3-Team' },
+]
+const emptyMessage = computed(() =>
+  mode.value === '2team'
+    ? 'No 2-team games logged yet.'
+    : mode.value === '3team'
+      ? 'No 3-team games logged yet.'
+      : 'No games logged yet — fun facts appear once you start playing.',
+)
+
 // Which explanation popover is pinned open (by card/fact key). Hover always
 // reveals the tooltip via CSS; clicking pins it so it works on touch too.
 const openInfo = ref<string | null>(null)
@@ -364,17 +403,33 @@ function toggleInfo(key: string) {
   openInfo.value = openInfo.value === key ? null : key
 }
 
-onMounted(async () => {
+async function loadFacts() {
+  loading.value = true
+  error.value = ''
   try {
-    facts.value = await getFunFacts()
-    if (facts.value.players.length > 0) selectedPlayer.value = facts.value.players[0].name
+    const data = await getFunFacts(mode.value)
+    facts.value = data
+    // Keep the spotlight on the same player when possible; the roster differs per
+    // format, so fall back to the most active player if the current one is absent.
+    const names = data.players.map((p) => p.name)
+    if (!selectedPlayer.value || !names.includes(selectedPlayer.value))
+      selectedPlayer.value = names[0] ?? ''
   } catch (err) {
+    facts.value = null
     error.value =
       err instanceof Error ? err.message : 'Could not load fun facts. Is the API running?'
   } finally {
     loading.value = false
   }
-})
+}
+
+function setMode(m: FunFactsMode) {
+  if (mode.value === m) return
+  mode.value = m
+  loadFacts()
+}
+
+onMounted(loadFacts)
 
 const spotlight = computed<PlayerFacts | null>(() =>
   facts.value && selectedPlayer.value ? facts.value.byPlayer[selectedPlayer.value] ?? null : null,

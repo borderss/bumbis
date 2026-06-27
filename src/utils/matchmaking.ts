@@ -120,6 +120,12 @@ export interface PlayerRanking {
   today_change: number
   goals_for: number
   goals_against: number
+  /** Games played / strictly won in 2-team games (for the split win-rate column). */
+  games_2t: number
+  wins_2t: number
+  /** Games played / strictly won in 3-team games. */
+  games_3t: number
+  wins_3t: number
 }
 
 export function getLeaderboard(): Promise<PlayerRanking[]> {
