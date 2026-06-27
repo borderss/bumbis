@@ -483,17 +483,17 @@
             >
               {{ player.games_2t }}/{{ player.games_3t }}
             </span>
-            <!-- Win % in 2-team games -->
+            <!-- Win % in 2-team games (green above the 50% break-even) -->
             <span
               class="w-10 sm:w-12 text-right font-extrabold text-sm tabular-nums"
-              :class="player.games_2t === 0 ? 'text-on-surface-variant' : ''"
+              :class="winRateClass(player.wins_2t, player.games_2t, 50)"
             >
               {{ winRate(player.wins_2t, player.games_2t) }}
             </span>
-            <!-- Win % in 3-team games -->
+            <!-- Win % in 3-team games (green above the 33% break-even) -->
             <span
               class="w-10 sm:w-12 text-right font-extrabold text-sm tabular-nums"
-              :class="player.games_3t === 0 ? 'text-on-surface-variant' : ''"
+              :class="winRateClass(player.wins_3t, player.games_3t, 33)"
             >
               {{ winRate(player.wins_3t, player.games_3t) }}
             </span>
@@ -954,6 +954,14 @@ watch(activeTab, (tab) => {
 // player has never played that format (distinguishes "0% win rate" from "n/a").
 function winRate(wins: number, games: number): string {
   return games > 0 ? `${Math.round((wins / games) * 100)}%` : '–'
+}
+
+// Colour class for a split win-rate cell: dim when the player has never played
+// the format, green once the rate clears the format's break-even baseline
+// (50% for 2-team, 33% for 3-team), otherwise the default text colour.
+function winRateClass(wins: number, games: number, baselinePct: number): string {
+  if (games === 0) return 'text-on-surface-variant'
+  return (wins / games) * 100 > baselinePct ? 'text-green-500' : ''
 }
 
 // Average goal differential per game, derived from the leaderboard's goal totals.
