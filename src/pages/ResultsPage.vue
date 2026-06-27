@@ -376,8 +376,8 @@
               >ELO</span
             >
             <span
-              class="hidden sm:block w-10 text-right text-on-surface-variant uppercase font-black tracking-widest text-xs"
-              >GP</span
+              class="hidden sm:block w-20 text-right text-on-surface-variant uppercase font-black tracking-widest text-xs"
+              >GP 2T/3T</span
             >
             <span
               class="w-10 sm:w-12 text-right text-on-surface-variant uppercase font-black tracking-widest text-xs"
@@ -477,11 +477,12 @@
               style="font-family: 'Plus Jakarta Sans', sans-serif"
               >{{ player.rating }}</span
             >
-            <!-- Games played -->
+            <!-- Games played, split 2-team / 3-team -->
             <span
-              class="hidden sm:block w-10 text-right text-on-surface-variant font-bold text-sm"
-              >{{ player.games_played }}</span
+              class="hidden sm:block w-20 text-right text-on-surface-variant font-bold text-xs tabular-nums"
             >
+              {{ player.games_2t }}/{{ player.games_3t }}
+            </span>
             <!-- Win % in 2-team games -->
             <span
               class="w-10 sm:w-12 text-right font-extrabold text-sm tabular-nums"
@@ -527,9 +528,9 @@
           </div>
 
           <p class="text-xs text-on-surface-variant px-4 pt-2">
-            Starting ELO: 1200 · GP = games played · 2T/3T W% = win rate in 2-team / 3-team games ·
-            GF:GA = goals scored:conceded · AGG = avg goal gain per game · Today = ELO gained/lost
-            today
+            Starting ELO: 1200 · GP 2T/3T = games played in 2-team / 3-team games · 2T/3T W% = win
+            rate in 2-team / 3-team games · GF:GA = goals scored:conceded · AGG = avg goal gain per
+            game · Today = ELO gained/lost today
           </p>
         </template>
       </div>
