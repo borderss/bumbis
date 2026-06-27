@@ -261,6 +261,9 @@ export interface FunFacts {
   tags: Record<string, PlayerTag>
 }
 
-export function getFunFacts(): Promise<FunFacts> {
-  return request('/funfacts')
+/** Game-format filter for the Fun Facts page. */
+export type FunFactsMode = 'all' | '2team' | '3team'
+
+export function getFunFacts(mode: FunFactsMode = 'all'): Promise<FunFacts> {
+  return request(mode === 'all' ? '/funfacts' : `/funfacts?mode=${mode}`)
 }

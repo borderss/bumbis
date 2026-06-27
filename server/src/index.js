@@ -698,9 +698,22 @@ app.post('/api/gamble', (_req, res) => {
   res.status(503).json(GAMBLE_MAINTENANCE)
 })
 
-app.get('/api/funfacts', (_req, res) => {
+app.get('/api/funfacts', (req, res) => {
   try {
-    const facts = computeFunFacts(getResultsForRecalculation(), getLeaderboard())
+    // Optional game-format filter: only 2-team or 3-team games (default: all).
+    // Facts are replayed over just the matching games, so each view is a
+    // self-consistent "what if only this format existed" replay (peak ELO, biggest
+    // gain, etc. are recomputed, not sliced from the real ratings). The decay-aware
+    // reigning champion is a whole-system concept, so the filtered views pass an
+    // empty leaderboard and simply omit it.
+    const mode = req.query.mode === '2team' ? 2 : req.query.mode === '3team' ? 3 : 'all'
+    const allResults = getResultsForRecalculation()
+    const results =
+      mode === 'all'
+        ? allResults
+        : allResults.filter((r) => Array.isArray(r.teams) && r.teams.length === mode)
+    const leaderboard = mode === 'all' ? getLeaderboard() : []
+    const facts = computeFunFacts(results, leaderboard)
     res.json(facts)
   } catch (err) {
     console.error('Fun facts computation failed:', err)
@@ -778,6 +791,44 @@ function computeGoalStats() {
 }
 
 /**
+ * Per-player games/wins split by game size (number of teams). Only 2-team and
+ * 3-team games are tracked, since those are the formats the rankings break out.
+ * Validity mirrors computeEloChanges/applyEloChanges so these counts reconcile
+ * with each player's games_played: all-zero games are skipped, anonymous teams
+ * (no resolved players) don't count, and a "win" is a strict unique top score.
+ */
+function computeWinSplitStats() {
+  const stats = new Map() // name -> { games_2t, wins_2t, games_3t, wins_3t }
+  for (const { teams } of getResultsForRecalculation()) {
+    const teamCount = teams.length
+    if (teamCount !== 2 && teamCount !== 3) continue
+    if (teams.every((t) => t.score === 0)) continue
+
+    const scores = teams.map((t) => t.score)
+    const maxScore = Math.max(...scores)
+    const maxCount = scores.filter((s) => s === maxScore).length
+
+    for (const team of teams) {
+      const players = resolvePlayers(team)
+      if (players.length === 0) continue
+      const won = team.score === maxScore && maxCount === 1
+      for (const name of players) {
+        const s = stats.get(name) ?? { games_2t: 0, wins_2t: 0, games_3t: 0, wins_3t: 0 }
+        if (teamCount === 2) {
+          s.games_2t += 1
+          if (won) s.wins_2t += 1
+        } else {
+          s.games_3t += 1
+          if (won) s.wins_3t += 1
+        }
+        stats.set(name, s)
+      }
+    }
+  }
+  return stats
+}
+
+/**
  * Current leaderboard plus each player's net rating change since local midnight.
  * The baseline is the player's rating as of the start of today (decay included);
  * players first seen today are compared against their initial rating.
@@ -786,14 +837,17 @@ function getLeaderboardWithDailyChange() {
   const startOfToday = startOfTodayMs()
   const baseline = ratingsAsOf(startOfToday)
   const goalStats = computeGoalStats()
+  const winSplits = computeWinSplitStats()
+  const emptySplit = { games_2t: 0, wins_2t: 0, games_3t: 0, wins_3t: 0 }
   return getLeaderboard().map((player) => {
     const prev = baseline.get(player.name)
     const gs = goalStats.get(player.name) ?? { goals_for: 0, goals_against: 0 }
+    const ws = winSplits.get(player.name) ?? emptySplit
     const baseMidnight = prev
       ? decayedRating(prev.rating, prev.lastPlayedAt, startOfToday, graceDaysFor(player.name))
       : initialRatingFor(player.name)
     const effectiveMidnight = Math.round(Math.max(RATING_FLOOR, baseMidnight))
-    return { ...player, today_change: player.rating - effectiveMidnight, ...gs }
+    return { ...player, today_change: player.rating - effectiveMidnight, ...gs, ...ws }
   })
 }
 
