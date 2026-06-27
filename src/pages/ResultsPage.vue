@@ -376,8 +376,8 @@
               >ELO</span
             >
             <span
-              class="hidden sm:block w-10 text-right text-on-surface-variant uppercase font-black tracking-widest text-xs"
-              >GP</span
+              class="hidden sm:block w-20 text-right text-on-surface-variant uppercase font-black tracking-widest text-xs"
+              >GP 2T/3T</span
             >
             <span
               class="w-10 sm:w-12 text-right text-on-surface-variant uppercase font-black tracking-widest text-xs"
@@ -477,22 +477,23 @@
               style="font-family: 'Plus Jakarta Sans', sans-serif"
               >{{ player.rating }}</span
             >
-            <!-- Games played -->
+            <!-- Games played, split 2-team / 3-team -->
             <span
-              class="hidden sm:block w-10 text-right text-on-surface-variant font-bold text-sm"
-              >{{ player.games_played }}</span
+              class="hidden sm:block w-20 text-right text-on-surface-variant font-bold text-xs tabular-nums"
             >
-            <!-- Win % in 2-team games -->
+              {{ player.games_2t }}/{{ player.games_3t }}
+            </span>
+            <!-- Win % in 2-team games (green above the 50% break-even) -->
             <span
               class="w-10 sm:w-12 text-right font-extrabold text-sm tabular-nums"
-              :class="player.games_2t === 0 ? 'text-on-surface-variant' : ''"
+              :class="winRateClass(player.wins_2t, player.games_2t, 50)"
             >
               {{ winRate(player.wins_2t, player.games_2t) }}
             </span>
-            <!-- Win % in 3-team games -->
+            <!-- Win % in 3-team games (green above the 33% break-even) -->
             <span
               class="w-10 sm:w-12 text-right font-extrabold text-sm tabular-nums"
-              :class="player.games_3t === 0 ? 'text-on-surface-variant' : ''"
+              :class="winRateClass(player.wins_3t, player.games_3t, 33)"
             >
               {{ winRate(player.wins_3t, player.games_3t) }}
             </span>
@@ -527,9 +528,9 @@
           </div>
 
           <p class="text-xs text-on-surface-variant px-4 pt-2">
-            Starting ELO: 1200 · GP = games played · 2T/3T W% = win rate in 2-team / 3-team games ·
-            GF:GA = goals scored:conceded · AGG = avg goal gain per game · Today = ELO gained/lost
-            today
+            Starting ELO: 1200 · GP 2T/3T = games played in 2-team / 3-team games · 2T/3T W% = win
+            rate in 2-team / 3-team games · GF:GA = goals scored:conceded · AGG = avg goal gain per
+            game · Today = ELO gained/lost today
           </p>
         </template>
       </div>
@@ -953,6 +954,14 @@ watch(activeTab, (tab) => {
 // player has never played that format (distinguishes "0% win rate" from "n/a").
 function winRate(wins: number, games: number): string {
   return games > 0 ? `${Math.round((wins / games) * 100)}%` : '–'
+}
+
+// Colour class for a split win-rate cell: dim when the player has never played
+// the format, green once the rate clears the format's break-even baseline
+// (50% for 2-team, 33% for 3-team), otherwise the default text colour.
+function winRateClass(wins: number, games: number, baselinePct: number): string {
+  if (games === 0) return 'text-on-surface-variant'
+  return (wins / games) * 100 > baselinePct ? 'text-green-500' : ''
 }
 
 // Average goal differential per game, derived from the leaderboard's goal totals.
