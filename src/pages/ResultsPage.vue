@@ -203,39 +203,22 @@
               <p class="text-on-surface-variant uppercase font-black tracking-widest text-xs mb-3">
                 Score
               </p>
-              <div class="flex items-center gap-4">
+              <div class="grid grid-cols-6 sm:grid-cols-11 gap-2">
                 <button
+                  v-for="n in scoreOptions"
+                  :key="n"
                   type="button"
-                  class="w-12 h-12 rounded-full bg-surface-container-high flex items-center justify-center text-2xl font-black hover:bg-surface-container-highest active:scale-95 transition-all disabled:opacity-30"
-                  :disabled="team.score <= 0"
-                  @click="team.score = Math.max(0, team.score - 1)"
-                >
-                  −
-                </button>
-                <input
-                  :value="team.score"
-                  type="number"
-                  min="0"
-                  max="10"
+                  :aria-pressed="team.score === n"
                   :class="[
-                    team.score === 10 ? 'text-primary' : 'text-on-surface',
-                    'text-4xl font-black w-16 text-center bg-transparent outline-none border-b-2 border-transparent focus:border-primary transition-colors [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
+                    team.score === n
+                      ? 'bg-primary text-on-primary'
+                      : 'bg-surface-container-high text-on-surface hover:bg-surface-container-highest',
+                    'aspect-square rounded-full flex items-center justify-center text-lg font-black active:scale-95 transition-all',
                   ]"
                   style="font-family: 'Plus Jakarta Sans', sans-serif"
-                  @input="
-                    team.score = Math.min(
-                      10,
-                      Math.max(0, Number(($event.target as HTMLInputElement).value) || 0),
-                    )
-                  "
-                />
-                <button
-                  type="button"
-                  class="w-12 h-12 rounded-full bg-surface-container-high flex items-center justify-center text-2xl font-black hover:bg-surface-container-highest active:scale-95 transition-all disabled:opacity-30"
-                  :disabled="team.score >= 10"
-                  @click="team.score = Math.min(10, team.score + 1)"
+                  @click="team.score = n"
                 >
-                  +
+                  {{ n }}
                 </button>
               </div>
             </div>
@@ -393,7 +376,7 @@
             >
             <span
               class="hidden sm:block w-14 text-right text-on-surface-variant uppercase font-black tracking-widest text-xs"
-              >AGG</span
+              >GF/G</span
             >
             <span
               class="w-12 sm:w-14 text-right text-on-surface-variant uppercase font-black tracking-widest text-xs"
@@ -503,12 +486,11 @@
             >
               {{ player.goals_for }}:{{ Math.round(player.goals_against) }}
             </span>
-            <!-- Avg goal gain per game -->
+            <!-- Avg goals scored per game -->
             <span
-              class="hidden sm:block w-14 text-right font-bold text-xs tabular-nums"
-              :class="gainClass(player)"
+              class="hidden sm:block w-14 text-right text-on-surface-variant font-bold text-xs tabular-nums"
             >
-              {{ signedGain(avgGoalGain(player)) }}
+              {{ avgGoalsFor(player) }}
             </span>
             <!-- Today's gain/loss -->
             <span class="w-12 sm:w-14 text-right">
@@ -529,8 +511,8 @@
 
           <p class="text-xs text-on-surface-variant px-4 pt-2">
             Starting ELO: 1200 · GP 2T/3T = games played in 2-team / 3-team games · 2T/3T W% = win
-            rate in 2-team / 3-team games · GF:GA = goals scored:conceded · AGG = avg goal gain per
-            game · Today = ELO gained/lost today
+            rate in 2-team / 3-team games · GF:GA = goals scored:conceded · GF/G = avg goals scored
+            per game · Today = ELO gained/lost today
           </p>
         </template>
       </div>
@@ -689,6 +671,8 @@ const activeTab = ref<Tab>(initialTab)
 // ── Log Game ─────────────────────────────────────────────────────────────────
 const TEAMS_KEY = 'bumbis:log-teams'
 const SOURCE_KEY = 'bumbis:log-teams:source'
+// Selectable scores: a game runs to 10, so every possible score is one tap away.
+const scoreOptions = Array.from({ length: 11 }, (_, i) => i)
 
 function makeTeam(index: number, players: string[] = []): TeamResult & { name: string } {
   return { name: `Team ${index + 1}`, players, score: 0 }
@@ -964,16 +948,10 @@ function winRateClass(wins: number, games: number, baselinePct: number): string 
   return (wins / games) * 100 > baselinePct ? 'text-green-500' : ''
 }
 
-// Average goal differential per game, derived from the leaderboard's goal totals.
-function avgGoalGain(p: PlayerRanking): number {
-  return p.games_played > 0 ? (p.goals_for - p.goals_against) / p.games_played : 0
-}
-function signedGain(n: number): string {
-  return `${n > 0 ? '+' : ''}${n.toFixed(1)}`
-}
-function gainClass(p: PlayerRanking): string {
-  const g = avgGoalGain(p)
-  return g > 0 ? 'text-green-500' : g < 0 ? 'text-red-500' : 'text-on-surface-variant'
+// Average goals scored per game. Goals are tracked per team, so this is the
+// average score of the team the player was on. "–" when they have no games yet.
+function avgGoalsFor(p: PlayerRanking): string {
+  return p.games_played > 0 ? (p.goals_for / p.games_played).toFixed(1) : '–'
 }
 
 function teamColor(index: number) {
