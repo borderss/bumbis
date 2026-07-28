@@ -171,9 +171,15 @@ export function computeFunFacts(results, leaderboard = []) {
   for (const { teams, playedAt } of results) {
     if (!Array.isArray(teams) || teams.length < 2) continue
 
+    // winStreak has to travel with the rating or computeEloChanges skips the
+    // win-streak bonus and the replay drifts from the live ratings.
     const ratingsMap = new Map()
     for (const [name, info] of running) {
-      ratingsMap.set(name, { rating: info.rating, gamesPlayed: info.gamesPlayed })
+      ratingsMap.set(name, {
+        rating: info.rating,
+        gamesPlayed: info.gamesPlayed,
+        winStreak: info.winStreak,
+      })
     }
     const changes = computeEloChanges(teams, ratingsMap)
     if (changes.size === 0) continue // no trackable identities in this game
@@ -189,6 +195,8 @@ export function computeFunFacts(results, leaderboard = []) {
     const monthKey = monthKeyOf(playedAt)
     const wday = weekdayOf(playedAt)
     const maxScore = Math.max(...teams.map((t) => t.score))
+    // Strict-winner semantics, same as elo.js: a tied top score is a win for nobody.
+    const maxCount = teams.filter((t) => t.score === maxScore).length
     // Total goals in the game; a team's goals-against is the average of the
     // opposing teams' scores ((total − own) ÷ opponents), matching computeGoalStats.
     const totalScore = teams.reduce((s, t) => s + t.score, 0)
@@ -202,7 +210,7 @@ export function computeFunFacts(results, leaderboard = []) {
       return {
         players,
         score: t.score,
-        isMax: t.score === maxScore,
+        won: t.score === maxScore && maxCount === 1,
         avgBefore: players.length ? avg(ratings) : INITIAL_RATING,
       }
     })
@@ -222,7 +230,7 @@ export function computeFunFacts(results, leaderboard = []) {
             duos.set(key, d)
           }
           d.games++
-          if (resolved[i].isMax) d.wins++
+          if (resolved[i].won) d.wins++
         }
       }
       // Opponents: every cross-team pair.
@@ -270,7 +278,7 @@ export function computeFunFacts(results, leaderboard = []) {
         if (!change) continue
         const before = change.oldRating
         const after = Math.max(RATING_FLOOR, before + change.delta)
-        const won = team.isMax
+        const won = change.won // from the ELO engine, so it can't disagree with the rankings
         const lost = team.score < maxScore
 
         ensure(name).push({
@@ -325,8 +333,8 @@ export function computeFunFacts(results, leaderboard = []) {
     }
 
     // ----- Biggest upset (winner team much weaker than a losing team) -----
-    const winners = resolved.filter((t) => t.isMax && t.players.length > 0)
-    const losers = resolved.filter((t) => !t.isMax)
+    const winners = resolved.filter((t) => t.won && t.players.length > 0)
+    const losers = resolved.filter((t) => !t.won)
     if (winners.length && losers.length) {
       const strongestLoser = losers.reduce((m, t) => (t.avgBefore > m.avgBefore ? t : m))
       for (const w of winners) {
@@ -345,7 +353,7 @@ export function computeFunFacts(results, leaderboard = []) {
 
     // ----- Biggest blowout (largest margin over the runner-up, any format) -----
     // Needs a single clear winner; the "losers" shown are the runner-up team.
-    const blowoutWinners = resolved.filter((t) => t.isMax && t.players.length > 0)
+    const blowoutWinners = resolved.filter((t) => t.won && t.players.length > 0)
     if (blowoutWinners.length === 1) {
       const winT = blowoutWinners[0]
       const others = resolved.filter((t) => t !== winT)
@@ -364,10 +372,17 @@ export function computeFunFacts(results, leaderboard = []) {
 
     // ----- Apply ELO changes to the running (no-decay) ratings -----
     for (const [name, change] of changes) {
-      const info = running.get(name) ?? { rating: change.oldRating, gamesPlayed: 0, wins: 0 }
+      const info = running.get(name) ?? {
+        rating: change.oldRating,
+        gamesPlayed: 0,
+        wins: 0,
+        winStreak: 0,
+      }
       info.rating = Math.max(RATING_FLOOR, change.oldRating + change.delta)
       info.gamesPlayed += 1
       if (change.won) info.wins += 1
+      // Mirror applyEloChanges: extend on a win, reset on any non-win (loss or tied top).
+      info.winStreak = change.won ? info.winStreak + 1 : 0
       running.set(name, info)
     }
   }

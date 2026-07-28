@@ -10,7 +10,6 @@
     </header>
 
     <main class="flex-grow container mx-auto px-4 sm:px-6 py-4 max-w-3xl pb-28">
-      <!-- Page header -->
       <div class="flex flex-wrap items-center justify-between gap-4 mb-8 px-2">
         <div>
           <p class="text-on-surface-variant uppercase font-black tracking-widest text-sm">
@@ -34,7 +33,6 @@
         </div>
       </div>
 
-      <!-- Tab bar -->
       <div class="flex gap-2 bg-surface-container rounded-full p-1.5 mb-8">
         <button
           v-for="tab in tabs"
@@ -54,7 +52,6 @@
 
       <!-- ── LOG GAME TAB ─────────────────────────────────────────────── -->
       <div v-if="activeTab === 'log'" class="space-y-6">
-        <!-- Team count -->
         <div
           class="bg-surface-container-low rounded-[2rem] p-6 shadow-[0_20px_40px_rgba(0,0,0,0.35)] flex flex-wrap items-center gap-4"
         >
@@ -81,7 +78,6 @@
           </div>
         </div>
 
-        <!-- Winner announcement -->
         <transition name="fade">
           <div
             v-if="detectedWinner !== null"
@@ -108,7 +104,6 @@
           </div>
         </transition>
 
-        <!-- Team cards -->
         <div class="grid grid-cols-1 gap-4">
           <div
             v-for="(team, i) in logTeams"
@@ -118,7 +113,6 @@
               'rounded-[2rem] p-6 shadow-[0_20px_40px_rgba(0,0,0,0.2)] transition-all',
             ]"
           >
-            <!-- Team name -->
             <div class="flex items-center gap-3 mb-4">
               <span class="w-3 h-3 rounded-full" :style="{ backgroundColor: teamColor(i) }" />
               <input
@@ -129,7 +123,6 @@
               />
             </div>
 
-            <!-- Players -->
             <div class="mb-5">
               <p class="text-on-surface-variant uppercase font-black tracking-widest text-xs mb-2">
                 Players
@@ -165,7 +158,6 @@
                 >
                   <span class="material-symbols-outlined text-lg">add</span>
                 </button>
-                <!-- Autocomplete dropdown -->
                 <div
                   v-if="focusedTeam === i && autocomplete(i).length > 0"
                   class="absolute top-full left-0 right-0 mt-1 bg-surface-container-highest rounded-2xl shadow-xl z-20 overflow-hidden py-1"
@@ -181,7 +173,6 @@
                   </button>
                 </div>
               </div>
-              <!-- Default baller quick-add chips -->
               <div
                 v-if="!playerInputs[i]?.trim() && availableDefaultBallers(i).length > 0"
                 class="flex flex-wrap gap-2 mt-3"
@@ -198,44 +189,26 @@
               </div>
             </div>
 
-            <!-- Score -->
             <div>
               <p class="text-on-surface-variant uppercase font-black tracking-widest text-xs mb-3">
                 Score
               </p>
-              <div class="flex items-center gap-4">
+              <div class="grid grid-cols-6 sm:grid-cols-11 gap-2">
                 <button
+                  v-for="n in scoreOptions"
+                  :key="n"
                   type="button"
-                  class="w-12 h-12 rounded-full bg-surface-container-high flex items-center justify-center text-2xl font-black hover:bg-surface-container-highest active:scale-95 transition-all disabled:opacity-30"
-                  :disabled="team.score <= 0"
-                  @click="team.score = Math.max(0, team.score - 1)"
-                >
-                  −
-                </button>
-                <input
-                  :value="team.score"
-                  type="number"
-                  min="0"
-                  max="10"
+                  :aria-pressed="team.score === n"
                   :class="[
-                    team.score === 10 ? 'text-primary' : 'text-on-surface',
-                    'text-4xl font-black w-16 text-center bg-transparent outline-none border-b-2 border-transparent focus:border-primary transition-colors [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
+                    team.score === n
+                      ? 'bg-primary text-on-primary'
+                      : 'bg-surface-container-high text-on-surface hover:bg-surface-container-highest',
+                    'aspect-square rounded-full flex items-center justify-center text-lg font-black active:scale-95 transition-all',
                   ]"
                   style="font-family: 'Plus Jakarta Sans', sans-serif"
-                  @input="
-                    team.score = Math.min(
-                      10,
-                      Math.max(0, Number(($event.target as HTMLInputElement).value) || 0),
-                    )
-                  "
-                />
-                <button
-                  type="button"
-                  class="w-12 h-12 rounded-full bg-surface-container-high flex items-center justify-center text-2xl font-black hover:bg-surface-container-highest active:scale-95 transition-all disabled:opacity-30"
-                  :disabled="team.score >= 10"
-                  @click="team.score = Math.min(10, team.score + 1)"
+                  @click="team.score = n"
                 >
-                  +
+                  {{ n }}
                 </button>
               </div>
             </div>
@@ -329,14 +302,23 @@
                   >
                 </div>
               </div>
-              <span
-                :class="[
-                  team.score === 10 ? 'text-primary' : 'text-on-surface',
-                  'text-3xl font-black',
-                ]"
-                style="font-family: 'Plus Jakarta Sans', sans-serif"
-                >{{ team.score }}</span
-              >
+              <div class="flex items-center gap-3 shrink-0">
+                <span
+                  v-if="teamElo(result, ti) !== null"
+                  class="font-extrabold text-sm tabular-nums"
+                  :class="eloToneClass(teamElo(result, ti))"
+                >
+                  {{ signedElo(teamElo(result, ti)) }}
+                </span>
+                <span
+                  :class="[
+                    team.score === 10 ? 'text-primary' : 'text-on-surface',
+                    'text-3xl font-black',
+                  ]"
+                  style="font-family: 'Plus Jakarta Sans', sans-serif"
+                  >{{ team.score }}</span
+                >
+              </div>
             </div>
           </div>
         </div>
@@ -361,7 +343,6 @@
           </button>
         </div>
         <template v-else>
-          <!-- Header row -->
           <div class="flex items-center gap-2 sm:gap-4 px-2 sm:px-4 pb-1">
             <span
               class="w-6 sm:w-8 text-center text-on-surface-variant uppercase font-black tracking-widest text-xs"
@@ -393,7 +374,7 @@
             >
             <span
               class="hidden sm:block w-14 text-right text-on-surface-variant uppercase font-black tracking-widest text-xs"
-              >AGG</span
+              >GF/G</span
             >
             <span
               class="w-12 sm:w-14 text-right text-on-surface-variant uppercase font-black tracking-widest text-xs"
@@ -415,7 +396,6 @@
               'rounded-2xl px-3 sm:px-4 py-3 flex items-center gap-2 sm:gap-4 shadow-sm transition-all',
             ]"
           >
-            <!-- Rank -->
             <div class="w-6 sm:w-8 text-center">
               <span
                 v-if="idx === 0"
@@ -439,7 +419,6 @@
                 idx + 1
               }}</span>
             </div>
-            <!-- Name + fun-fact badge -->
             <div class="flex-1 min-w-0">
               <span class="block font-extrabold tracking-tight truncate">{{ player.name }}</span>
               <button
@@ -464,7 +443,6 @@
                 </span>
               </button>
             </div>
-            <!-- ELO -->
             <span
               :class="[
                 player.rating > 1200
@@ -477,7 +455,6 @@
               style="font-family: 'Plus Jakarta Sans', sans-serif"
               >{{ player.rating }}</span
             >
-            <!-- Games played, split 2-team / 3-team -->
             <span
               class="hidden sm:block w-20 text-right text-on-surface-variant font-bold text-xs tabular-nums"
             >
@@ -497,20 +474,16 @@
             >
               {{ winRate(player.wins_3t, player.games_3t) }}
             </span>
-            <!-- Goals for : Goals against -->
             <span
               class="hidden sm:block w-20 text-right text-on-surface-variant font-bold text-xs tabular-nums"
             >
               {{ player.goals_for }}:{{ Math.round(player.goals_against) }}
             </span>
-            <!-- Avg goal gain per game -->
             <span
-              class="hidden sm:block w-14 text-right font-bold text-xs tabular-nums"
-              :class="gainClass(player)"
+              class="hidden sm:block w-14 text-right text-on-surface-variant font-bold text-xs tabular-nums"
             >
-              {{ signedGain(avgGoalGain(player)) }}
+              {{ avgGoalsFor(player) }}
             </span>
-            <!-- Today's gain/loss -->
             <span class="w-12 sm:w-14 text-right">
               <span
                 v-if="player.today_change !== 0"
@@ -529,14 +502,13 @@
 
           <p class="text-xs text-on-surface-variant px-4 pt-2">
             Starting ELO: 1200 · GP 2T/3T = games played in 2-team / 3-team games · 2T/3T W% = win
-            rate in 2-team / 3-team games · GF:GA = goals scored:conceded · AGG = avg goal gain per
-            game · Today = ELO gained/lost today
+            rate in 2-team / 3-team games · GF:GA = goals scored:conceded · GF/G = avg goals scored
+            per game · Today = ELO gained/lost today
           </p>
         </template>
       </div>
     </main>
 
-    <!-- Bottom action: submit game -->
     <div
       v-if="activeTab === 'log'"
       class="fixed bottom-0 left-0 w-full z-50 flex justify-center pb-10 px-6"
@@ -562,7 +534,6 @@
       </div>
     </div>
 
-    <!-- Auth modal -->
     <transition name="fade">
       <div v-if="authModalOpen" class="fixed inset-0 z-50 flex items-center justify-center px-6">
         <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="cancelAuth" />
@@ -607,7 +578,6 @@
       </div>
     </transition>
 
-    <!-- Delete confirmation modal -->
     <transition name="fade">
       <div v-if="confirmDeleteId" class="fixed inset-0 z-50 flex items-center justify-center px-6">
         <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="cancelDelete" />
@@ -643,7 +613,6 @@
       </div>
     </transition>
 
-    <!-- Background Orbs -->
     <div
       class="fixed -top-24 -left-24 w-96 h-96 bg-primary opacity-5 blur-[120px] rounded-full pointer-events-none"
     />
@@ -689,6 +658,7 @@ const activeTab = ref<Tab>(initialTab)
 // ── Log Game ─────────────────────────────────────────────────────────────────
 const TEAMS_KEY = 'bumbis:log-teams'
 const SOURCE_KEY = 'bumbis:log-teams:source'
+const scoreOptions = Array.from({ length: 11 }, (_, i) => i) // a game runs to 10
 
 function makeTeam(index: number, players: string[] = []): TeamResult & { name: string } {
   return { name: `Team ${index + 1}`, players, score: 0 }
@@ -841,7 +811,6 @@ const AUTH_KEY = 'bumbis:auth'
 
 const isAuthenticated = ref(localStorage.getItem(AUTH_KEY) === APP_PASSWORD)
 
-// Generic auth modal
 const authModalOpen = ref(false)
 const authPassword = ref('')
 const authError = ref('')
@@ -878,7 +847,6 @@ function cancelAuth() {
   authError.value = ''
 }
 
-// Delete confirm modal (shown after auth)
 const deletingId = ref<string | null>(null)
 const confirmDeleteId = ref<string | null>(null)
 
@@ -950,30 +918,33 @@ watch(activeTab, (tab) => {
   if (tab === 'rankings') loadRankings()
 })
 
-// Win rate for a split (2-team / 3-team) as a "NN%" string, or "–" when the
-// player has never played that format (distinguishes "0% win rate" from "n/a").
+// "–" rather than 0% when the format was never played.
 function winRate(wins: number, games: number): string {
   return games > 0 ? `${Math.round((wins / games) * 100)}%` : '–'
 }
 
-// Colour class for a split win-rate cell: dim when the player has never played
-// the format, green once the rate clears the format's break-even baseline
-// (50% for 2-team, 33% for 3-team), otherwise the default text colour.
+// Green once the rate clears the format's break-even (50% for 2-team, 33% for 3-team).
 function winRateClass(wins: number, games: number, baselinePct: number): string {
   if (games === 0) return 'text-on-surface-variant'
   return (wins / games) * 100 > baselinePct ? 'text-green-500' : ''
 }
 
-// Average goal differential per game, derived from the leaderboard's goal totals.
-function avgGoalGain(p: PlayerRanking): number {
-  return p.games_played > 0 ? (p.goals_for - p.goals_against) / p.games_played : 0
+// null = anonymous team, which earns no rating.
+function teamElo(result: GameResult, teamIndex: number): number | null {
+  return result.teamElo?.[teamIndex] ?? null
 }
-function signedGain(n: number): string {
-  return `${n > 0 ? '+' : ''}${n.toFixed(1)}`
+function signedElo(n: number | null): string {
+  if (n === null) return ''
+  return `${n > 0 ? '+' : ''}${n}`
 }
-function gainClass(p: PlayerRanking): string {
-  const g = avgGoalGain(p)
-  return g > 0 ? 'text-green-500' : g < 0 ? 'text-red-500' : 'text-on-surface-variant'
+function eloToneClass(n: number | null): string {
+  if (n === null || n === 0) return 'text-on-surface-variant'
+  return n > 0 ? 'text-green-500' : 'text-red-500'
+}
+
+// Goals are tracked per team, so this is the average score of the player's team.
+function avgGoalsFor(p: PlayerRanking): string {
+  return p.games_played > 0 ? (p.goals_for / p.games_played).toFixed(1) : '–'
 }
 
 function teamColor(index: number) {

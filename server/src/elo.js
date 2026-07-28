@@ -79,8 +79,10 @@ export function streakBonusMultiplier(priorStreak) {
 export const DECAY_PER_DAY = 2 // rating points lost per inactive day
 export const DECAY_GRACE_DAYS = 7 // free inactive days before decay starts
 export const DEFAULT_BALLER_GRACE_DAYS = 7 // grace for the regulars (currently same as everyone)
-export const RATING_FLOOR = 800 // no rating ever drops below this (losses or decay)
-export const DECAY_FLOOR = RATING_FLOOR // decay bottoms out at the same floor
+// Sitting out only costs you down to DECAY_FLOOR; losing games can take you to
+// RATING_FLOOR. Anything below 800 is therefore earned on the pitch.
+export const RATING_FLOOR = 500 // hard floor for game results
+export const DECAY_FLOOR = 800 // inactivity decay stops here
 const DAY_MS = 24 * 60 * 60 * 1000
 
 // The regular roster ("default ballers") — defined once in shared/defaultBallers.json
@@ -100,7 +102,8 @@ export function initialRatingFor(name) {
 /**
  * Rating after inactivity decay between `lastPlayedAt` and `asOf` (epoch ms).
  * Counts whole elapsed days only; the first `graceDays` are free. Decay bottoms
- * out at DECAY_FLOOR and never raises a rating already below it.
+ * out at DECAY_FLOOR and never raises a rating already below it — a player who
+ * lost their way below that floor is simply left alone by decay.
  */
 export function decayedRating(rating, lastPlayedAt, asOf, graceDays = DECAY_GRACE_DAYS) {
   if (!lastPlayedAt || !asOf || rating <= DECAY_FLOOR) return rating

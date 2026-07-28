@@ -477,9 +477,9 @@ export function deleteResult(id) {
 
 export function getResultsForRecalculation() {
   return db
-    .prepare(`SELECT teams_json, created_at FROM game_results ORDER BY created_at ASC`)
+    .prepare(`SELECT id, teams_json, created_at FROM game_results ORDER BY created_at ASC`)
     .all()
-    .map((r) => ({ teams: JSON.parse(r.teams_json), playedAt: r.created_at }))
+    .map((r) => ({ id: r.id, teams: JSON.parse(r.teams_json), playedAt: r.created_at }))
 }
 
 export function resetElo() {

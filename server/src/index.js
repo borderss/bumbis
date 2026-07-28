@@ -633,7 +633,8 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }))
 
 // --- Game Results -------------------------------------------------------------
 app.get('/api/results', (_req, res) => {
-  res.json(getAllResults())
+  const eloByResult = computeResultEloDeltas()
+  res.json(getAllResults().map((r) => ({ ...r, teamElo: eloByResult.get(r.id) ?? null })))
 })
 
 app.post('/api/results', (req, res) => {
@@ -762,6 +763,57 @@ function ratingsAsOf(cutoff) {
     }
   }
   return state
+}
+
+/**
+ * ELO each team banked per game: result id -> array aligned with that result's
+ * teams (null for anonymous teams). Mean of the team's players, which only
+ * differs per player when their K-factors or streaks do. Same replay as
+ * recalculateElo, decay and floor included, so it agrees with the ladder.
+ */
+function computeResultEloDeltas() {
+  const state = new Map() // name -> { rating, gamesPlayed, winStreak, lastPlayedAt }
+  const byResult = new Map()
+  for (const { id, teams, playedAt } of getResultsForRecalculation()) {
+    const current = new Map()
+    for (const [name, r] of state) {
+      current.set(name, {
+        rating: decayedRating(r.rating, r.lastPlayedAt, playedAt, graceDaysFor(name)),
+        gamesPlayed: r.gamesPlayed,
+        winStreak: r.winStreak,
+      })
+    }
+    const changes = computeEloChanges(teams, current)
+    if (changes.size === 0) continue
+
+    const applied = new Map() // name -> rating actually gained/lost, floor included
+    for (const [name, { delta, won }] of changes) {
+      const prev = state.get(name)
+      const base = prev
+        ? decayedRating(prev.rating, prev.lastPlayedAt, playedAt, graceDaysFor(name))
+        : initialRatingFor(name)
+      const after = Math.max(RATING_FLOOR, base + delta)
+      applied.set(name, after - base)
+      state.set(name, {
+        rating: after,
+        gamesPlayed: (prev?.gamesPlayed ?? 0) + 1,
+        winStreak: won ? (prev?.winStreak ?? 0) + 1 : 0,
+        lastPlayedAt: playedAt,
+      })
+    }
+
+    byResult.set(
+      id,
+      teams.map((team) => {
+        const earned = resolvePlayers(team)
+          .map((name) => applied.get(name))
+          .filter((d) => d !== undefined)
+        if (earned.length === 0) return null
+        return Math.round(earned.reduce((s, d) => s + d, 0) / earned.length)
+      }),
+    )
+  }
+  return byResult
 }
 
 /**
