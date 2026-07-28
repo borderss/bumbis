@@ -171,9 +171,8 @@ export function computeFunFacts(results, leaderboard = []) {
   for (const { teams, playedAt } of results) {
     if (!Array.isArray(teams) || teams.length < 2) continue
 
-    // winStreak has to travel with the rating: computeEloChanges reads it to apply
-    // the win-streak bonus, so leaving it out would under-credit every winner on a
-    // streak and drift the replayed ratings away from the live ones.
+    // winStreak has to travel with the rating or computeEloChanges skips the
+    // win-streak bonus and the replay drifts from the live ratings.
     const ratingsMap = new Map()
     for (const [name, info] of running) {
       ratingsMap.set(name, {
@@ -279,9 +278,7 @@ export function computeFunFacts(results, leaderboard = []) {
         if (!change) continue
         const before = change.oldRating
         const after = Math.max(RATING_FLOOR, before + change.delta)
-        // Straight from the ELO engine, so wins here can never disagree with the
-        // rankings: a tied top score counts as neither a win nor a loss.
-        const won = change.won
+        const won = change.won // from the ELO engine, so it can't disagree with the rankings
         const lost = team.score < maxScore
 
         ensure(name).push({
