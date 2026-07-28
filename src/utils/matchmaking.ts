@@ -95,6 +95,8 @@ export interface GameResult {
   teams: TeamResult[]
   winner: string
   source: 'lobby' | 'custom'
+  /** ELO each team banked, aligned with `teams`; null for anonymous teams. */
+  teamElo?: (number | null)[] | null
 }
 
 export function getResults(): Promise<GameResult[]> {
