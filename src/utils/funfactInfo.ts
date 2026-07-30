@@ -10,12 +10,13 @@ export const FUNFACT_INFO: Record<string, string> = {
     'The longest win streak that is still active — wins in a row up to the player’s most recent game.',
   longestLossStreak: 'The most consecutive games lost, all-time — the “wooden spoon”.',
   mostWinsInDay: 'The most wins recorded by one player in a single day’s session.',
-  perfectSession: 'Won every game played on a single day, with at least 3 games and zero losses.',
+  perfectSession: 'Won every single game played on one day, with at least 3 games.',
   longestAttendance:
     'The longest run of consecutive session-days attended without missing one. A “session” is any day games were logged.',
   longestReign:
-    'The longest unbroken run of days as the #1-rated player. The champion is recomputed at the end of each play-day from game-driven ELO.',
-  mostDaysAsChampion: 'The most days ever finishing a play-day as the top-rated player.',
+    'The longest unbroken run of days as the #1-rated player. The champion is recomputed at the end of each play-day, with inactivity decay applied — so stopping showing up eventually costs the crown.',
+  mostDaysAsChampion:
+    'The most days ever finishing a play-day as the top-rated player, inactivity decay included.',
 
   // Dominance & margins
   mostShutoutsDelivered:
@@ -36,19 +37,25 @@ export const FUNFACT_INFO: Record<string, string> = {
   weeklyMvp:
     'MVP of the most recently completed week: the player with the biggest net ELO gain that week (min 2 games), tie-broken by wins.',
   mostMvpTitles: 'The most weekly MVP awards won all-time.',
-  longestMvpStreak: 'The most consecutive weeks (in which they played) won as MVP.',
-  highestMvpRate: 'The highest share of played weeks won as MVP (min 3 weeks played).',
+  longestMvpStreak:
+    'The most consecutive weeks won as MVP, counted across the weeks they played — a week they played without winning it breaks the run.',
+  highestMvpRate:
+    'The highest share of weeks won as MVP, counting only weeks they were eligible — played at least 2 games (min 3 such weeks).',
   reigningChampion: 'The current #1 on the live leaderboard by ELO (after inactivity decay).',
 
   // Rivalries & head-to-head
-  biggestRivalry: 'The two players who have faced each other on opposing teams the most times.',
+  biggestRivalry:
+    'The two players who have faced each other on opposing teams the most times. Meetings in a 3-team game a third side won are listed as undecided — neither of them beat the other there.',
   mostLopsided:
-    'The most one-sided rivalry — the biggest head-to-head domination (min 4 meetings).',
+    'The most one-sided rivalry — the biggest head-to-head domination, over the meetings one of them won (min 4 decided).',
   bestDuo: 'The teammates with the highest win rate when on the same team (min 4 games together).',
-  cursedDuo: 'The teammates with the lowest win rate together (min 4 games together).',
+  cursedDuo:
+    'The teammates with the lowest win rate together (min 4 games together, and only shown once a second duo qualifies).',
   mostPlayedDuo: 'The pair who have teamed up the most — the chemistry award.',
-  nemesis: 'The opponent who has beaten this player the most (min 3 meetings).',
-  pigeon: 'The opponent this player beats the most — their favourite victim (min 3 meetings).',
+  nemesis:
+    'The opponent who has beaten this player the most (min 3 decided meetings). Meetings a third team won count for neither side.',
+  pigeon:
+    'The opponent this player beats the most — their favourite victim (min 3 decided meetings).',
 
   // ELO milestones
   highestPeakElo: 'The highest ELO rating ever reached at any point in history.',
@@ -71,14 +78,15 @@ export const FUNFACT_INFO: Record<string, string> = {
   comebackKing:
     'The most wins in the game immediately after a heavy loss (lost by 5+ to the leaders). Only final scores are stored, so a blow-out stands in for “trailing badly”.',
   clutch: 'The best win rate in nail-biters decided by a single goal (min 4 such games).',
-  choker: 'The worst win rate in those same one-goal games (min 4).',
+  choker:
+    'The worst win rate in those same one-goal games (min 4, and only shown once a second player qualifies).',
   bounceBack: 'Win rate in the very next game after a loss — how well they recover.',
   tilt: 'Loss rate in the game right after a loss — how prone they are to spiralling.',
   kingmaker:
-    'Teammates win more when this player is on their team. Measured as the average win-rate lift across teammates who have played both with and without them.',
+    'Teammates win more when this player is on their team. Measured as the average win-rate lift across teammates who have played both alongside them and in games they sat out — games played against them do not count as “without”.',
   anchor: 'Teammates win less when this player is on their team — the opposite of a kingmaker.',
   jekyllHyde:
-    'The biggest swing in day-to-day form, measured as the standard deviation of their daily win rates.',
+    'The biggest swing in day-to-day form, measured as the standard deviation of their daily win rates. Only days with 2+ games count, since a single game can only score 0% or 100%.',
 
   // Personal fallback badge (player holds no league-wide title)
   personal: 'A personal highlight from this player’s own record.',

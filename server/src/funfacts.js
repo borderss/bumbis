@@ -2,6 +2,8 @@ import {
   INITIAL_RATING,
   RATING_FLOOR,
   computeEloChanges,
+  decayedRating,
+  graceDaysFor,
   initialRatingFor,
   resolvePlayers,
 } from './elo.js'
@@ -14,36 +16,55 @@ import {
  * facts (peak rating, biggest gain/drop, upsets, daily champions, …) stay in
  * lock-step with the real ratings and can never silently drift from elo.js.
  *
- * The replay deliberately ignores inactivity decay: decay is a presentation
- * concept applied lazily to the live leaderboard, whereas these facts describe
- * what actually happened in games. "Reigning champion" is the one fact that is
- * decay-aware, so it is taken straight from the live leaderboard instead.
+ * The replay ignores inactivity decay for anything describing what happened in
+ * a game (peak rating, gains, upsets): decay is a presentation concept applied
+ * lazily to the live leaderboard, and a game's outcome does not change because
+ * someone later stopped playing. The two "who is #1" facts are the exception —
+ * "reigning champion" comes straight from the live (decayed) leaderboard, and
+ * the daily champion applies the same decay rule during the replay. Without it
+ * a player who won a few games and vanished keeps the crown for every later
+ * session day, which is exactly what decay exists to prevent.
+ *
+ * Head-to-head and duo records both use elo.js's strict-winner rule: a win is a
+ * unique top score. Merely outscoring another team in a 3-team game someone else
+ * won is not a win over them, so such meetings are counted but stay undecided.
+ * That keeps these records identical to the ones buildMatchupHistory derives for
+ * the win prediction — the same pair must never show two different records.
  *
  * A handful of facts ask for information the log does not capture (we only
  * store final scores, never in-game progression). Those are mapped to the
  * closest faithful definition and that definition is surfaced in the UI:
  *   - "Comeback king" → most wins in the game immediately after a heavy loss.
  *   - "Trailing badly" is approximated by a heavy loss (lost by ≥ HEAVY_MARGIN).
+ *
+ * Every "worst X" fact needs at least two qualifying candidates. With a single
+ * candidate the best and the worst are the same subject, which reads as a bug.
  */
 
 // --- Tunable thresholds -------------------------------------------------------
 const MIN_GAMES_WINRATE = 8 // highest win rate / most balanced
-const MIN_GAMES_RIVALRY = 4 // biggest / most lopsided rivalry
-const MIN_GAMES_NEMESIS = 3 // nemesis / pigeon
+const MIN_GAMES_RIVALRY = 4 // decided meetings for "most lopsided rivalry"
+const MIN_GAMES_NEMESIS = 3 // decided meetings for nemesis / pigeon
 const MIN_GAMES_DUO = 4 // best / cursed / most-played duo
 const MIN_GAMES_CLOSE = 4 // clutch / choker
 const MIN_GAMES_TIER = 4 // giant killer / flat-track bully
 const MIN_GAMES_BOUNCE = 4 // bounce-back / tilt
 const MIN_GAMES_WEEKDAY = 3 // lucky / cursed weekday (per player, per weekday)
 const MIN_GAMES_SCORING = 8 // sharpshooter / iron wall / goal-difference king
-const PERFECT_MIN_GAMES = 3 // a "perfect session" needs at least this many wins
+const PERFECT_MIN_GAMES = 3 // a "perfect session" needs at least this many games
 const MVP_MIN_GAMES = 2 // games in a week to be eligible for weekly MVP
-const MIN_WEEKS_MVP_RATE = 3 // weeks participated for "highest MVP rate"
+const MIN_WEEKS_MVP_RATE = 3 // eligible weeks for "highest MVP rate"
 const WOWY_MIN = 3 // teammate games with AND without you (kingmaker/anchor)
 const WOWY_MIN_PARTNERS = 2 // qualifying teammates needed for a kingmaker/anchor score
-const JEKYLL_MIN_DAYS = 4 // distinct play-days for Jekyll & Hyde variance
+const JEKYLL_MIN_DAYS = 4 // qualifying play-days for Jekyll & Hyde variance
+// A single-game day scores a win rate of exactly 0 or 1, which maximises the
+// variance no matter how steady the player is. Only multi-game days can speak to
+// day-to-day form, so days below this are left out of the Jekyll & Hyde spread.
+const JEKYLL_MIN_GAMES_PER_DAY = 2
 const HEAVY_MARGIN = 5 // a "heavy loss" / blow-out (2-team games)
 const TIER_MARGIN = 25 // rating gap that makes an opponent "stronger" / "weaker"
+// A "worst X" only means something when something else could have held it.
+const MIN_CANDIDATES_FOR_WORST = 2
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -75,7 +96,16 @@ function isoWeekOf(ts) {
 function pairKey(a, b) {
   return a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`
 }
-function avg(nums) {
+/** Plain arithmetic mean; 0 for an empty list. */
+function mean(nums) {
+  return nums.length ? nums.reduce((s, n) => s + n, 0) / nums.length : 0
+}
+/**
+ * Mean of a list of ratings. An empty lineup is anonymous, so it stands in at
+ * INITIAL_RATING for opponent-strength purposes — never use this for anything
+ * that is not a rating.
+ */
+function avgRating(nums) {
   return nums.length ? nums.reduce((s, n) => s + n, 0) / nums.length : INITIAL_RATING
 }
 function round(n) {
@@ -130,12 +160,15 @@ export function computeFunFacts(results, leaderboard = []) {
     return g
   }
 
-  // Head-to-head (opponents) and duo (teammates) tallies.
+  // Head-to-head (opponents) and duo (teammates) tallies. `games` counts every
+  // meeting; `aWins`/`bWins` only games one of them actually won, so in 3-team
+  // games a meeting a third party won stays undecided and aWins + bWins < games.
   const h2h = new Map() // pairKey -> { a, b, games, aWins, bWins }
   const duos = new Map() // pairKey -> { a, b, games, wins }
 
-  // ELO replay state (game-driven, no decay).
-  const running = new Map() // name -> { rating, gamesPlayed, wins }
+  // ELO replay state (game-driven). Ratings carry no decay; lastPlayedAt is kept
+  // so the daily champion can apply it, matching the live leaderboard's #1.
+  const running = new Map() // name -> { rating, gamesPlayed, wins, winStreak, lastPlayedAt }
 
   // Milestone trackers.
   let peakElo = null // { player, rating, at }
@@ -154,14 +187,27 @@ export function computeFunFacts(results, leaderboard = []) {
   const dayChampion = [] // champion name at the end of each day in dayOrder
 
   let currentDay = null
+  let currentDayLastTs = null // last game of the day being closed, for decay
 
+  /**
+   * Crown the top-rated player as of the end of `currentDay`. Ratings are decayed
+   * up to that day's last game with the same rule the live leaderboard uses, so a
+   * player who stopped showing up loses the crown instead of holding it forever.
+   */
   const recordDayChampion = () => {
     if (currentDay === null) return
     let champ = null
     let bestRating = -Infinity
     for (const [name, info] of running) {
-      if (info.gamesPlayed > 0 && info.rating > bestRating) {
-        bestRating = info.rating
+      if (info.gamesPlayed === 0) continue
+      const rating = decayedRating(
+        info.rating,
+        info.lastPlayedAt,
+        currentDayLastTs,
+        graceDaysFor(name),
+      )
+      if (rating > bestRating) {
+        bestRating = rating
         champ = name
       }
     }
@@ -211,7 +257,7 @@ export function computeFunFacts(results, leaderboard = []) {
         players,
         score: t.score,
         won: t.score === maxScore && maxCount === 1,
-        avgBefore: players.length ? avg(ratings) : INITIAL_RATING,
+        avgBefore: avgRating(ratings),
       }
     })
     const nTeams = resolved.length
@@ -233,10 +279,12 @@ export function computeFunFacts(results, leaderboard = []) {
           if (resolved[i].won) d.wins++
         }
       }
-      // Opponents: every cross-team pair.
+      // Opponents: every cross-team pair. A win is credited only when that
+      // player's team won the game outright — outscoring the other side in a game
+      // a third team took is not a win over them, so the meeting stays undecided.
       for (let j = i + 1; j < nTeams; j++) {
-        const si = resolved[i].score
-        const sj = resolved[j].score
+        const iWon = resolved[i].won
+        const jWon = resolved[j].won
         for (const p of resolved[i].players) {
           for (const q of resolved[j].players) {
             const key = pairKey(p, q)
@@ -247,8 +295,8 @@ export function computeFunFacts(results, leaderboard = []) {
               h2h.set(key, h)
             }
             h.games++
-            if (si > sj) h[p === h.a ? 'aWins' : 'bWins']++
-            else if (sj > si) h[q === h.a ? 'aWins' : 'bWins']++
+            if (iWon) h[p === h.a ? 'aWins' : 'bWins']++
+            else if (jWon) h[q === h.a ? 'aWins' : 'bWins']++
           }
         }
       }
@@ -263,11 +311,10 @@ export function computeFunFacts(results, leaderboard = []) {
       const oppRatings = resolved
         .filter((_, j) => j !== i)
         .flatMap((t) => t.players.map((n) => running.get(n)?.rating ?? initialRatingFor(n)))
-      const oppAvgBefore = oppRatings.length ? avg(oppRatings) : INITIAL_RATING
+      const oppAvgBefore = avgRating(oppRatings)
 
-      // Two-team margin context (margin facts only make sense head-to-head).
+      // The single opposing team, for facts that only make sense head-to-head.
       const oppTeam = nTeams === 2 ? resolved[1 - i] : null
-      const margin = oppTeam ? team.score - oppTeam.score : null
       // Highest score among the other teams — lets us spot a one-goal win in any
       // format (2- or 3-team), where the winner edged the runner-up by a goal.
       const otherScores = resolved.filter((_, j) => j !== i).map((t) => t.score)
@@ -295,7 +342,6 @@ export function computeFunFacts(results, leaderboard = []) {
           // Average of the opposing teams' scores, so 3-team games (enemy sum ÷ 2)
           // are comparable to head-to-head rather than double-counting concessions.
           goalsAgainst: (totalScore - team.score) / Math.max(1, nTeams - 1),
-          margin,
           // Close / one-goal / heavy / shutout facts compare against the
           // best other team, so they hold for 2- and 3-team games alike.
           closeGame: bestOtherScore !== null && Math.abs(team.score - bestOtherScore) === 1,
@@ -333,8 +379,11 @@ export function computeFunFacts(results, leaderboard = []) {
     }
 
     // ----- Biggest upset (winner team much weaker than a losing team) -----
+    // Both sides must be nameable: an anonymous team has no roster to show and
+    // stands in at INITIAL_RATING, so it would render a blank opponent list and
+    // invent a rating gap out of a placeholder.
     const winners = resolved.filter((t) => t.won && t.players.length > 0)
-    const losers = resolved.filter((t) => !t.won)
+    const losers = resolved.filter((t) => !t.won && t.players.length > 0)
     if (winners.length && losers.length) {
       const strongestLoser = losers.reduce((m, t) => (t.avgBefore > m.avgBefore ? t : m))
       for (const w of winners) {
@@ -356,9 +405,10 @@ export function computeFunFacts(results, leaderboard = []) {
     const blowoutWinners = resolved.filter((t) => t.won && t.players.length > 0)
     if (blowoutWinners.length === 1) {
       const winT = blowoutWinners[0]
-      const others = resolved.filter((t) => t !== winT)
+      // Same rule as the upset: only a nameable runner-up can be displayed.
+      const others = resolved.filter((t) => t !== winT && t.players.length > 0)
       const runnerUp = others.reduce((m, t) => (t.score > m.score ? t : m), others[0])
-      const bMargin = winT.score - runnerUp.score
+      const bMargin = runnerUp ? winT.score - runnerUp.score : 0
       if (bMargin > 0 && (!biggestBlowout || bMargin > biggestBlowout.margin)) {
         biggestBlowout = {
           winners: winT.players.slice(),
@@ -377,14 +427,18 @@ export function computeFunFacts(results, leaderboard = []) {
         gamesPlayed: 0,
         wins: 0,
         winStreak: 0,
+        lastPlayedAt: playedAt,
       }
       info.rating = Math.max(RATING_FLOOR, change.oldRating + change.delta)
       info.gamesPlayed += 1
+      info.lastPlayedAt = playedAt
       if (change.won) info.wins += 1
       // Mirror applyEloChanges: extend on a win, reset on any non-win (loss or tied top).
       info.winStreak = change.won ? info.winStreak + 1 : 0
       running.set(name, info)
     }
+
+    currentDayLastTs = playedAt
   }
   recordDayChampion() // close out the final day
 
@@ -437,7 +491,10 @@ export function computeFunFacts(results, leaderboard = []) {
       goalsForTotal: goalsFor,
       goalsAgainstTotal: goalsAgainst,
       byDay,
-      peak: Math.max(...games.map((g) => g.ratingAfter)),
+      // A rating is "reached" the moment you hold it, so the rating carried into
+      // the first game counts too — otherwise a player who only ever lost peaks
+      // below the rating they actually started from.
+      peak: Math.max(games[0].ratingBefore, ...games.map((g) => g.ratingAfter)),
     })
   }
 
@@ -452,9 +509,11 @@ export function computeFunFacts(results, leaderboard = []) {
     for (const [day, d] of perPlayer.get(name).byDay) {
       if (d.wins > 0 && (!mostWinsInDay || d.wins > mostWinsInDay.value))
         mostWinsInDay = { player: name, value: d.wins, day, games: d.games }
-      if (d.losses === 0 && d.wins >= PERFECT_MIN_GAMES) {
-        if (!perfectSession || d.wins > perfectSession.games)
-          perfectSession = { player: name, day, games: d.wins }
+      // "Won every game played" means exactly that — a tied-top game is not a
+      // loss, but it is not a win either, so it disqualifies the session.
+      if (d.wins === d.games && d.games >= PERFECT_MIN_GAMES) {
+        if (!perfectSession || d.games > perfectSession.games)
+          perfectSession = { player: name, day, games: d.games }
       }
     }
   }
@@ -537,18 +596,33 @@ export function computeFunFacts(results, leaderboard = []) {
   const mostGoalsScored = bestOf(players, (n) => round(perPlayer.get(n).goalsForTotal), 1)
 
   // --- Rivalries & H2H ---
+  // "Biggest" counts every meeting; "most lopsided" is a dominance ratio, so it
+  // only looks at the meetings one of the two actually won — undecided games say
+  // nothing about who is dominating whom, and leaving them in the denominator
+  // would cap a perfect record below 100%.
   let biggestRivalry = null
   let mostLopsided = null
   for (const h of h2h.values()) {
     if (!biggestRivalry || h.games > biggestRivalry.games)
-      biggestRivalry = { a: h.a, b: h.b, games: h.games, aWins: h.aWins, bWins: h.bWins }
-    if (h.games >= MIN_GAMES_RIVALRY) {
+      // `games` is every meeting but the win columns only cover the decided ones,
+      // so `undecided` is carried too — otherwise the three numbers shown on the
+      // card do not add up and the record looks like it is missing games.
+      biggestRivalry = {
+        a: h.a,
+        b: h.b,
+        games: h.games,
+        aWins: h.aWins,
+        bWins: h.bWins,
+        undecided: h.games - h.aWins - h.bWins,
+      }
+    const decided = h.aWins + h.bWins
+    if (decided >= MIN_GAMES_RIVALRY) {
       const top = Math.max(h.aWins, h.bWins)
-      const dominance = top / h.games
+      const dominance = top / decided
       if (
         !mostLopsided ||
         dominance > mostLopsided.dominance ||
-        (dominance === mostLopsided.dominance && h.games > mostLopsided.games)
+        (dominance === mostLopsided.dominance && decided > mostLopsided.games)
       ) {
         const winner = h.aWins >= h.bWins ? h.a : h.b
         const loser = h.aWins >= h.bWins ? h.b : h.a
@@ -557,7 +631,7 @@ export function computeFunFacts(results, leaderboard = []) {
           loser,
           winnerWins: top,
           loserWins: Math.min(h.aWins, h.bWins),
-          games: h.games,
+          games: decided,
           dominance,
         }
       }
@@ -568,10 +642,12 @@ export function computeFunFacts(results, leaderboard = []) {
   let bestDuo = null
   let cursedDuo = null
   let mostPlayedDuo = null
+  let qualifyingDuos = 0
   for (const d of duos.values()) {
     if (!mostPlayedDuo || d.games > mostPlayedDuo.games)
       mostPlayedDuo = { a: d.a, b: d.b, games: d.games, wins: d.wins }
     if (d.games >= MIN_GAMES_DUO) {
+      qualifyingDuos++
       const wr = winRate(d.wins, d.games)
       if (!bestDuo || wr > bestDuo.winRate)
         bestDuo = { a: d.a, b: d.b, games: d.games, wins: d.wins, winRate: wr }
@@ -579,6 +655,8 @@ export function computeFunFacts(results, leaderboard = []) {
         cursedDuo = { a: d.a, b: d.b, games: d.games, wins: d.wins, winRate: wr }
     }
   }
+  // With one qualifying duo it would be both the best and the "cursed" one.
+  if (qualifyingDuos < MIN_CANDIDATES_FOR_WORST) cursedDuo = null
 
   // --- ELO milestones (continued) ---
   let mostImproved = null
@@ -638,6 +716,8 @@ export function computeFunFacts(results, leaderboard = []) {
   let bounceBack = null
   let tilt = null
   let jekyllHyde = null
+  let closeGameCandidates = 0
+  let bounceCandidates = 0
 
   for (const name of players) {
     const games = playerGames.get(name)
@@ -653,6 +733,7 @@ export function computeFunFacts(results, leaderboard = []) {
     // Close-game (1-goal) record.
     const close = games.filter((g) => g.closeGame)
     if (close.length >= MIN_GAMES_CLOSE) {
+      closeGameCandidates++
       const cw = close.filter((g) => g.won).length
       const wr = winRate(cw, close.length)
       if (!clutch || wr > clutch.winRate)
@@ -661,38 +742,49 @@ export function computeFunFacts(results, leaderboard = []) {
         choker = { player: name, winRate: wr, wins: cw, games: close.length }
     }
 
-    // After-a-loss record.
+    // After-a-loss record. Losses are counted directly rather than as "did not
+    // win", so a tied-top game is not reported as a loss.
     let afterLossG = 0
     let afterLossW = 0
+    let afterLossL = 0
     for (let i = 1; i < games.length; i++) {
       if (games[i - 1].lost) {
         afterLossG++
         if (games[i].won) afterLossW++
+        if (games[i].lost) afterLossL++
       }
     }
     if (afterLossG >= MIN_GAMES_BOUNCE) {
+      bounceCandidates++
       const wr = winRate(afterLossW, afterLossG)
       if (!bounceBack || wr > bounceBack.winRate)
         bounceBack = { player: name, winRate: wr, games: afterLossG }
-      const lossRate = 1 - wr
+      const lossRate = winRate(afterLossL, afterLossG)
       if (!tilt || lossRate > tilt.lossRate) tilt = { player: name, lossRate, games: afterLossG }
     }
 
-    // Jekyll & Hyde: variance of per-day win rates.
-    const byDay = perPlayer.get(name).byDay
-    if (byDay.size >= JEKYLL_MIN_DAYS) {
-      const rates = [...byDay.values()].map((d) => winRate(d.wins, d.games))
-      const m = avg(rates)
+    // Jekyll & Hyde: spread of per-day win rates. Single-game days are skipped —
+    // their rate can only be 0 or 1, which would swamp the spread with noise.
+    const multiGameDays = [...perPlayer.get(name).byDay.values()].filter(
+      (d) => d.games >= JEKYLL_MIN_GAMES_PER_DAY,
+    )
+    if (multiGameDays.length >= JEKYLL_MIN_DAYS) {
+      const rates = multiGameDays.map((d) => winRate(d.wins, d.games))
+      const m = mean(rates)
       const variance = rates.reduce((s, r) => s + (r - m) ** 2, 0) / rates.length
       const std = Math.sqrt(variance)
       if (!jekyllHyde || std > jekyllHyde.value)
-        jekyllHyde = { player: name, value: std, days: byDay.size }
+        jekyllHyde = { player: name, value: std, days: multiGameDays.length }
     }
   }
+  // A lone qualifier would be both the clutch player and the choker.
+  if (closeGameCandidates < MIN_CANDIDATES_FOR_WORST) choker = null
+  if (bounceCandidates < MIN_CANDIDATES_FOR_WORST) tilt = null
 
   // Kingmaker / anchor (with-or-without-you lift on teammates).
   let kingmaker = null
   let anchor = null
+  let wowyCandidates = 0
   for (const name of players) {
     const lifts = []
     // Build the set of teammates this player has ever had.
@@ -705,11 +797,14 @@ export function computeFunFacts(results, leaderboard = []) {
       let withoutG = 0
       let withoutW = 0
       for (const g of mateGames) {
-        const together = g.teammates.includes(name)
-        if (together) {
+        // "Without" has to mean absent, not on the other side. Counting games the
+        // mate played AGAINST this player as "without" credits a strong player
+        // twice: teammates win alongside them and lose facing them, and both
+        // halves inflate the same lift.
+        if (g.teammates.includes(name)) {
           withG++
           if (g.won) withW++
-        } else {
+        } else if (!g.opponents.includes(name)) {
           withoutG++
           if (g.won) withoutW++
         }
@@ -719,13 +814,16 @@ export function computeFunFacts(results, leaderboard = []) {
       }
     }
     if (lifts.length >= WOWY_MIN_PARTNERS) {
-      const score = avg(lifts)
+      wowyCandidates++
+      const score = mean(lifts)
       if (!kingmaker || score > kingmaker.value)
         kingmaker = { player: name, value: score, partners: lifts.length }
       if (!anchor || score < anchor.value)
         anchor = { player: name, value: score, partners: lifts.length }
     }
   }
+  // A lone qualifier would be both the kingmaker and the anchor.
+  if (wowyCandidates < MIN_CANDIDATES_FOR_WORST) anchor = null
 
   // --- MVP & titles ---
   const mvp = computeMvp(playerGames, players, now)
@@ -742,7 +840,9 @@ export function computeFunFacts(results, leaderboard = []) {
   for (const name of players) {
     const p = perPlayer.get(name)
 
-    // Nemesis (beats you most) & pigeon (you beat most) from H2H.
+    // Nemesis (beats you most) & pigeon (you beat most) from H2H. Both are about
+    // who beat whom, so undecided meetings are excluded from the count and the
+    // rate — `games` here means "meetings one of us won".
     let nemesis = null
     let pigeon = null
     for (const h of h2h.values()) {
@@ -751,27 +851,28 @@ export function computeFunFacts(results, leaderboard = []) {
       const myWins = meIsA ? h.aWins : h.bWins
       const theirWins = meIsA ? h.bWins : h.aWins
       const opp = meIsA ? h.b : h.a
-      if (h.games < MIN_GAMES_NEMESIS) continue
+      const decided = myWins + theirWins
+      if (decided < MIN_GAMES_NEMESIS) continue
       if (
         theirWins > 0 &&
         (!nemesis ||
           theirWins > nemesis.theirWins ||
-          (theirWins === nemesis.theirWins && theirWins / h.games > nemesis.rate))
+          (theirWins === nemesis.theirWins && theirWins / decided > nemesis.rate))
       )
         nemesis = {
           name: opp,
           theirWins,
           yourWins: myWins,
-          games: h.games,
-          rate: theirWins / h.games,
+          games: decided,
+          rate: theirWins / decided,
         }
       if (
         myWins > 0 &&
         (!pigeon ||
           myWins > pigeon.yourWins ||
-          (myWins === pigeon.yourWins && myWins / h.games > pigeon.rate))
+          (myWins === pigeon.yourWins && myWins / decided > pigeon.rate))
       )
-        pigeon = { name: opp, yourWins: myWins, theirWins, games: h.games, rate: myWins / h.games }
+        pigeon = { name: opp, yourWins: myWins, theirWins, games: decided, rate: myWins / decided }
     }
 
     // Best teammate (highest win rate together, min games).
@@ -798,14 +899,18 @@ export function computeFunFacts(results, leaderboard = []) {
     }
     let bestWeekday = null
     let worstWeekday = null
+    let qualifyingWeekdays = 0
     for (const [day, e] of wd) {
       if (e.games < MIN_GAMES_WEEKDAY) continue
+      qualifyingWeekdays++
       const wr = winRate(e.wins, e.games)
       if (!bestWeekday || wr > bestWeekday.winRate)
         bestWeekday = { weekday: WEEKDAY_NAMES[day], winRate: wr, games: e.games }
       if (!worstWeekday || wr < worstWeekday.winRate)
         worstWeekday = { weekday: WEEKDAY_NAMES[day], winRate: wr, games: e.games }
     }
+    // One qualifying weekday would be both the lucky and the cursed one.
+    if (qualifyingWeekdays < MIN_CANDIDATES_FOR_WORST) worstWeekday = null
 
     const cur =
       p.currentWinStreak > 0
@@ -1086,15 +1191,27 @@ function computeMvp(playerGames, players, now) {
   const orderedWeeks = [...weeks.keys()].sort()
   const mvpByWeek = [] // { week, player, net, wins, games } in chronological order
   const titlesByPlayer = {}
-  const weeksParticipated = {}
+  const weeksEligible = {} // completed weeks the player was MVP-eligible in
+  // Completed weeks each player appeared in at all — the streak walks these, so a
+  // week you played but did not win breaks the run even if nobody won it.
+  const weeksPlayed = new Map() // player -> Set of week keys
 
   for (const week of orderedWeeks) {
     const standings = weeks.get(week)
-    // Only completed weeks count toward the MVP rate — titles can only be won
-    // in completed weeks, so counting the in-progress week would dilute rates.
+    // The MVP rate divides titles by the weeks you could actually have won one:
+    // completed (a title can only be won in a completed week) and played often
+    // enough to be eligible. Counting a one-game week would hold a rate down for
+    // a week the player was never in the running.
     if (week !== currentWeek)
-      for (const name of standings.keys())
-        weeksParticipated[name] = (weeksParticipated[name] ?? 0) + 1
+      for (const [name, s] of standings) {
+        if (s.games >= MVP_MIN_GAMES) weeksEligible[name] = (weeksEligible[name] ?? 0) + 1
+        let played = weeksPlayed.get(name)
+        if (!played) {
+          played = new Set()
+          weeksPlayed.set(name, played)
+        }
+        played.add(week)
+      }
 
     let best = null
     for (const [name, s] of standings) {
@@ -1129,29 +1246,26 @@ function computeMvp(playerGames, players, now) {
   for (const [name, count] of Object.entries(titlesByPlayer))
     if (!mostTitles || count > mostTitles.value) mostTitles = { player: name, value: count }
 
-  // Longest streak of consecutive (completed) MVP weeks by the same player.
+  // Longest run of consecutive weeks the player took the MVP, counted across the
+  // completed weeks they actually played. Walking only the weeks that produced an
+  // MVP would step over a week the player played and lost, joining two separate
+  // runs into one — so the player's own weeks are the sequence, not the awards.
+  const mvpWeekOwner = new Map(completed.map((m) => [m.week, m.player]))
   let longestStreak = null
-  {
-    let cur = null
-    let curLen = 0
-    for (const m of completed) {
-      if (m.player === cur) curLen++
-      else {
-        cur = m.player
-        curLen = 1
-      }
-      if (!longestStreak || curLen > longestStreak.value)
-        longestStreak = { player: cur, value: curLen }
-    }
+  for (const [name, played] of weeksPlayed) {
+    const flags = [...played].sort().map((week) => mvpWeekOwner.get(week) === name)
+    const run = longestRun(flags)
+    if (run > 0 && (!longestStreak || run > longestStreak.value))
+      longestStreak = { player: name, value: run }
   }
 
   let highestRate = null
-  for (const [name, parts] of Object.entries(weeksParticipated)) {
-    if (parts < MIN_WEEKS_MVP_RATE) continue
+  for (const [name, eligible] of Object.entries(weeksEligible)) {
+    if (eligible < MIN_WEEKS_MVP_RATE) continue
     const titles = titlesByPlayer[name] ?? 0
-    const rate = titles / parts
+    const rate = titles / eligible
     if (!highestRate || rate > highestRate.rate)
-      highestRate = { player: name, rate, titles, weeks: parts }
+      highestRate = { player: name, rate, titles, weeks: eligible }
   }
 
   return { latest, mostTitles, longestStreak, highestRate, titlesByPlayer }

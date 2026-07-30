@@ -659,9 +659,13 @@ const sections = computed<{ title: string; cards: Card[] }[]>(() => {
           'Biggest Rivalry',
           'swords',
           g.biggestRivalry,
+          // Meetings a third team won belong to neither player, so they are named
+          // rather than left as a silent gap between the total and the win columns.
           (f) => ({
             name: `${f.a} vs ${f.b}`,
-            detail: `${f.games} meetings (${f.aWins}–${f.bWins})`,
+            detail: f.undecided
+              ? `${f.games} meetings (${f.aWins}–${f.bWins}, ${f.undecided} undecided)`
+              : `${f.games} meetings (${f.aWins}–${f.bWins})`,
           }),
           'neutral',
         ),

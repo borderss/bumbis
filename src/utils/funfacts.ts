@@ -50,9 +50,12 @@ export interface Champion {
 export interface Rivalry {
   a: string
   b: string
+  /** Every meeting on opposing teams. */
   games: number
   aWins: number
   bWins: number
+  /** Meetings a third team won, so neither of the two beat the other. */
+  undecided: number
 }
 export interface LopsidedRivalry {
   winner: string
