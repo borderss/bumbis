@@ -50,6 +50,12 @@ const _require = createRequire(import.meta.url)
  *    PER_WIN × priorStreak). Only the winner's gain is amplified (the system is
  *    already non-zero-sum), and any non-win — loss or tied-top — resets the
  *    streak to zero, matching the funfacts `currentWinStreak` definition.
+ *
+ * 8. Matchup history (prediction only, never ratings)
+ *    predictWinProbabilities can take a history index so the forecast knows who
+ *    beats whom and which duos overperform — see "Matchup history" below. It
+ *    shifts effective ratings for the forecast alone; computeEloChanges is
+ *    untouched, so the ladder stays a pure margin-of-victory ELO.
  */
 
 export const INITIAL_RATING = 1200 // starting rating for default ballers / unknown opponents
@@ -151,6 +157,228 @@ function teamAvgRating(players, currentRatings) {
   return ratings.reduce((a, b) => a + b, 0) / ratings.length
 }
 
+// --- Matchup history ----------------------------------------------------------
+// Ratings already fold in every past game, but only as one number per player.
+// They can say Roberts is the stronger player; they cannot say that Jānis beats
+// him anyway, or that two particular teammates are lethal specifically together.
+// The prediction therefore layers a matchup term on top, learned from each past
+// game's RESIDUAL: what actually happened minus what the ratings alone expected.
+// Working from the residual rather than the raw win rate is what keeps this from
+// double-counting the rating gap the ratings already express.
+export const HISTORY_ELO_PER_RESIDUAL = 400 // a +0.25 residual ≈ +100 effective rating
+export const HISTORY_MAX_ELO = 120 // backstop cap on the shift a matchup may apply
+// Shrinkage pseudo-games: a pair's edge is their residual SUM over (games + K),
+// so one meeting is worth ~5% of its face value, ten ~33%, twenty ~50%. K is
+// deliberately large because a single binary result is mostly noise: at even
+// ratings a coin-flip win still scores a +0.5 residual. Tuned so one meeting
+// moves a 50/50 bar by ~3 points while a settled nemesis moves it by ~20.
+export const H2H_SHRINK_GAMES = 20
+export const DUO_SHRINK_GAMES = 20
+
+/**
+ * Order-independent key for a player pair, used by both history maps. The NUL
+ * separator cannot occur in a name, so "Jon Doe" + "Ann" and "Jon" + "Doe Ann"
+ * cannot collide.
+ */
+export function pairKey(a, b) {
+  return a < b ? `${a}\u0000${b}` : `${b}\u0000${a}`
+}
+
+/**
+ * Fold one settled game's residuals into the head-to-head and duo tallies.
+ * `ratings` is the rating state as it stood before this game.
+ */
+function recordMatchup(h2h, duo, lineups, winnerIndex, ratings) {
+  // Expectation from ratings alone — history must never feed back into itself.
+  const expected = predictWinProbabilities(lineups, ratings)
+  const residuals = lineups.map((_, i) => (i === winnerIndex ? 1 : 0) - expected[i])
+
+  for (let i = 0; i < lineups.length; i++) {
+    const players = lineups[i]
+    const won = i === winnerIndex
+
+    // Teammate pairs share their team's residual.
+    for (let x = 0; x < players.length; x++) {
+      for (let y = x + 1; y < players.length; y++) {
+        const [a, b] =
+          players[x] < players[y] ? [players[x], players[y]] : [players[y], players[x]]
+        const key = pairKey(a, b)
+        const rec = duo.get(key) ?? { a, b, games: 0, wins: 0, sum: 0 }
+        rec.games += 1
+        rec.wins += won ? 1 : 0
+        rec.sum += residuals[i]
+        duo.set(key, rec)
+      }
+    }
+
+    // Opposing pairs record the gap between the two sides' residuals. Halving it
+    // makes the two-team case land exactly on the winner's own residual (±1).
+    for (let j = i + 1; j < lineups.length; j++) {
+      for (const p of players) {
+        for (const q of lineups[j]) {
+          if (p === q) continue // same name on both sides: nothing to learn
+          const [a, b] = p < q ? [p, q] : [q, p]
+          const key = pairKey(a, b)
+          const rec = h2h.get(key) ?? { a, b, games: 0, aWins: 0, bWins: 0, sum: 0 }
+          const aSide = p === a ? i : j
+          const bSide = p === a ? j : i
+          rec.games += 1
+          rec.sum += (residuals[aSide] - residuals[bSide]) / 2
+          if (winnerIndex === aSide) rec.aWins += 1
+          else if (winnerIndex === bSide) rec.bWins += 1
+          h2h.set(key, rec)
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Distil a chronological list of results into per-pair matchup history.
+ *
+ * @param {Array<{ teams: Array<{ name?: string, players?: string[], score: number }>,
+ *                 playedAt: number }>} results ascending by playedAt.
+ * @returns {{ h2h: Map, duo: Map }}
+ *   h2h: pairKey -> { a, b, games, aWins, bWins, sum }, `sum` accumulating a's
+ *        edge over b in win-probability terms (±1 per two-team game).
+ *   duo: pairKey -> { a, b, games, wins, sum }, `sum` accumulating the residual
+ *        of the team the two shared.
+ *
+ * Only games the ELO model itself counts contribute — no all-zero scorelines, at
+ * least one identifiable team, and a strict unique winner (a tied top teaches
+ * nothing about who beats whom). Ratings are replayed forwards exactly as
+ * recalculateElo does, so every game is judged against the expectation that
+ * stood at the time rather than one computed with hindsight.
+ */
+export function buildMatchupHistory(results) {
+  const h2h = new Map()
+  const duo = new Map()
+  if (!Array.isArray(results)) return { h2h, duo }
+
+  const state = new Map() // name -> { rating, gamesPlayed, winStreak, lastPlayedAt }
+
+  for (const { teams, playedAt } of results) {
+    const current = new Map()
+    for (const [name, r] of state) {
+      current.set(name, {
+        rating: decayedRating(r.rating, r.lastPlayedAt, playedAt, graceDaysFor(name)),
+        gamesPlayed: r.gamesPlayed,
+        winStreak: r.winStreak,
+      })
+    }
+
+    // An empty change set means the game is invalid for ELO, so also for history.
+    const changes = computeEloChanges(teams, current)
+    if (changes.size > 0) {
+      const scores = teams.map((t) => t.score)
+      const maxScore = Math.max(...scores)
+      if (scores.filter((s) => s === maxScore).length === 1) {
+        recordMatchup(h2h, duo, teams.map(resolvePlayers), scores.indexOf(maxScore), current)
+      }
+    }
+
+    for (const [name, { delta, won }] of changes) {
+      const prev = state.get(name)
+      const base = prev
+        ? decayedRating(prev.rating, prev.lastPlayedAt, playedAt, graceDaysFor(name))
+        : initialRatingFor(name)
+      state.set(name, {
+        rating: Math.max(RATING_FLOOR, base + delta),
+        gamesPlayed: (prev?.gamesPlayed ?? 0) + 1,
+        winStreak: won ? (prev?.winStreak ?? 0) + 1 : 0,
+        lastPlayedAt: playedAt,
+      })
+    }
+  }
+
+  return { h2h, duo }
+}
+
+/**
+ * The effective-rating shift each team earns from matchup history, plus the one
+ * pair that contributed most (for display). Aligned to `lineups`.
+ *
+ * A reported pair carries `games`, `wins` and `losses`. For head-to-head those
+ * need not add up: in a three-team game where a third side wins, the two met but
+ * neither beat the other, so wins + losses < games. Callers rendering the record
+ * have to account for that remainder.
+ *
+ * Per team we average the shrunk per-pair edges — head-to-head across every
+ * cross-team pair, synergy across every teammate pair — so pairs who have never
+ * met simply pull the average toward zero. A matchup edge is inherently relative,
+ * so the result is centred across teams, then clamped to HISTORY_MAX_ELO.
+ */
+export function computeMatchupShifts(lineups, history) {
+  const blank = () => ({ eloShift: 0, topPair: null })
+  if (!Array.isArray(lineups) || lineups.length < 2) return (lineups ?? []).map(blank)
+  const h2h = history?.h2h
+  const duo = history?.duo
+  if (!h2h && !duo) return lineups.map(blank)
+
+  const n = lineups.length
+  const drafts = lineups.map((players, i) => {
+    let best = null
+    const consider = (edge, pair) => {
+      if (Math.abs(edge) > Math.abs(best?.edge ?? 0)) best = { edge, pair }
+    }
+
+    let h2hSum = 0
+    let h2hPairs = 0
+    for (let j = 0; j < n; j++) {
+      if (i === j) continue
+      for (const p of players) {
+        for (const q of lineups[j]) {
+          if (p === q) continue
+          h2hPairs += 1
+          const rec = h2h?.get(pairKey(p, q))
+          if (!rec) continue
+          const mine = p === rec.a
+          const edge = (mine ? rec.sum : -rec.sum) / (rec.games + H2H_SHRINK_GAMES)
+          h2hSum += edge
+          consider(edge, {
+            kind: 'h2h',
+            a: p,
+            b: q,
+            games: rec.games,
+            wins: mine ? rec.aWins : rec.bWins,
+            losses: mine ? rec.bWins : rec.aWins,
+          })
+        }
+      }
+    }
+
+    let duoSum = 0
+    let duoPairs = 0
+    for (let x = 0; x < players.length; x++) {
+      for (let y = x + 1; y < players.length; y++) {
+        duoPairs += 1
+        const rec = duo?.get(pairKey(players[x], players[y]))
+        if (!rec) continue
+        const edge = rec.sum / (rec.games + DUO_SHRINK_GAMES)
+        duoSum += edge
+        consider(edge, {
+          kind: 'duo',
+          a: players[x],
+          b: players[y],
+          games: rec.games,
+          wins: rec.wins,
+          // Only settled games are recorded, so every non-win is a loss here.
+          losses: rec.games - rec.wins,
+        })
+      }
+    }
+
+    const residual = (h2hPairs > 0 ? h2hSum / h2hPairs : 0) + (duoPairs > 0 ? duoSum / duoPairs : 0)
+    return { raw: HISTORY_ELO_PER_RESIDUAL * residual, best }
+  })
+
+  const mean = drafts.reduce((sum, d) => sum + d.raw, 0) / n
+  return drafts.map((d) => ({
+    eloShift: Math.max(-HISTORY_MAX_ELO, Math.min(HISTORY_MAX_ELO, d.raw - mean)),
+    topPair: d.best?.pair ?? null,
+  }))
+}
+
 /**
  * Predicted win probability per team for an upcoming game, using the same
  * effective-rating model as computeEloChanges. Generalises the pairwise Elo
@@ -161,19 +389,26 @@ function teamAvgRating(players, currentRatings) {
  *
  * For each team i: eff_i = avg_rating_i + SIZE_HANDICAP × (size_i − mean_other_size_i)
  * This reduces to the pairwise formula for 2 teams, satisfying the two-team identity.
+ *
+ * Pass a `history` index from buildMatchupHistory to add each team's matchup
+ * shift to its effective rating. The shift is centred across teams, so the
+ * two-team identity still holds — against expectedScore of the shifted ratings.
+ * Omit it (the default) for a pure-rating prediction; buildMatchupHistory relies
+ * on that path staying history-free.
  */
-export function predictWinProbabilities(teams, currentRatings) {
+export function predictWinProbabilities(teams, currentRatings, history = null) {
   if (!Array.isArray(teams) || teams.length === 0) return []
   const lineups = teams.map((t) => (Array.isArray(t) ? t : resolvePlayers(t)))
   const sizes = lineups.map((p) => Math.max(1, p.length)) // anonymous teams count as size 1
   const n = lineups.length
   const totalSize = sizes.reduce((a, b) => a + b, 0)
+  const shifts = history ? computeMatchupShifts(lineups, history) : null
 
   const weights = lineups.map((players, i) => {
     const avgRating = teamAvgRating(players, currentRatings)
     const size = sizes[i]
     const meanOtherSize = (totalSize - size) / (n - 1)
-    const eff = avgRating + SIZE_HANDICAP * (size - meanOtherSize)
+    const eff = avgRating + SIZE_HANDICAP * (size - meanOtherSize) + (shifts?.[i].eloShift ?? 0)
     return Math.pow(10, eff / 400)
   })
 

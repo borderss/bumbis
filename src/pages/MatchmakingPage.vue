@@ -262,6 +262,12 @@
                     :style="{ width: `${winPct(index)}%`, backgroundColor: teamColor(index) }"
                   />
                 </div>
+                <p
+                  v-if="matchupNote(index)"
+                  class="mt-1.5 text-xs font-bold text-on-surface-variant"
+                >
+                  {{ matchupNote(index) }}
+                </p>
               </div>
 
               <ul class="space-y-2">
@@ -337,6 +343,7 @@
 <script setup lang="ts">
 import {
   createRoom,
+  describeMatchup,
   getRoom,
   getRoomPrediction,
   joinRoom,
@@ -344,6 +351,7 @@ import {
   resetRoom,
   splitTeams,
   subscribeRoom,
+  type Insight,
   type Room,
 } from '@/utils/matchmaking'
 import { pairDefaultBallers } from '@/utils/defaultBallers'
@@ -385,6 +393,7 @@ const shareUrl = computed(() => `${window.location.origin}/match/${roomId.value}
 
 // ELO-based win prediction for the current split, aligned to team order.
 const prediction = ref<number[]>([])
+const insights = ref<Insight[]>([])
 const favoredTeam = computed(() => {
   if (prediction.value.length === 0) return null
   return prediction.value.reduce((best, p, i) => (p > prediction.value[best] ? i : best), 0)
@@ -395,16 +404,23 @@ function winPct(index: number): number | null {
   return p === undefined ? null : Math.round(p * 100)
 }
 
+function matchupNote(index: number): string | null {
+  return describeMatchup(insights.value[index])
+}
+
 async function loadPrediction() {
   if (!room.value || room.value.status !== 'split' || !room.value.teams) {
     prediction.value = []
+    insights.value = []
     return
   }
   try {
-    const { probabilities } = await getRoomPrediction(roomId.value)
+    const { probabilities, insights: pairs } = await getRoomPrediction(roomId.value)
     prediction.value = probabilities
+    insights.value = pairs ?? []
   } catch {
     prediction.value = []
+    insights.value = []
   }
 }
 

@@ -45,7 +45,9 @@ import {
 } from './db.js'
 import {
   RATING_FLOOR,
+  buildMatchupHistory,
   computeEloChanges,
+  computeMatchupShifts,
   decayedRating,
   graceDaysFor,
   initialRatingFor,
@@ -154,14 +156,28 @@ app.get('/api/rooms/:id', (req, res) => {
   res.json(state)
 })
 
+/**
+ * Win probabilities plus the matchup history behind them, aligned to team order.
+ * `teams` may be plain lineups (string[][]) or stored team objects. Every stored
+ * result is replayed to build the history index, the same on-demand replay the
+ * results and leaderboard endpoints already do.
+ */
+function predictionFor(teams) {
+  const lineups = teams.map((t) => (Array.isArray(t) ? t : resolvePlayers(t)))
+  const history = buildMatchupHistory(getResultsForRecalculation())
+  return {
+    probabilities: predictWinProbabilities(lineups, getPlayerRatingsMap(), history),
+    insights: computeMatchupShifts(lineups, history),
+  }
+}
+
 // Predicted win probability per team once a room has been split. Probabilities
 // are aligned to the room's team order and sum to 1; empty when not yet split.
 app.get('/api/rooms/:id/prediction', (req, res) => {
   const state = getRoomState(req.params.id)
   if (!state) return res.status(404).json({ error: 'Room not found' })
-  if (state.status !== 'split' || !state.teams) return res.json({ probabilities: [] })
-  const probabilities = predictWinProbabilities(state.teams, getPlayerRatingsMap())
-  res.json({ probabilities })
+  if (state.status !== 'split' || !state.teams) return res.json({ probabilities: [], insights: [] })
+  res.json(predictionFor(state.teams))
 })
 
 // Predicted win probability for an ad-hoc set of team lineups (no room needed),
@@ -173,8 +189,7 @@ app.post('/api/predict', (req, res) => {
     return res.status(400).json({ error: 'At least 2 teams required' })
   }
   const lineups = teams.map((t) => (Array.isArray(t) ? t.filter((n) => typeof n === 'string') : []))
-  const probabilities = predictWinProbabilities(lineups, getPlayerRatingsMap())
-  res.json({ probabilities })
+  res.json(predictionFor(lineups))
 })
 
 app.get('/api/rooms/:id/events', (req, res) => {

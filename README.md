@@ -175,6 +175,24 @@ Decay is **derived**, never stored: the database keeps each player's rating as o
 
 Each team is compared pairwise against every other team. The per-player delta is the **average** of all pairwise results, so the total movement is normalised regardless of how many teams played.
 
+### Win prediction: matchup history
+
+The win-chance bars (`GET /api/rooms/:id/prediction`, `POST /api/predict`) do **not** run on ratings alone. A rating is one number per player, so it can say Ann is stronger than Bob — never that Bob beats her anyway, or that two teammates are lethal specifically together. On top of the rating model the forecast therefore adds a **matchup term** learned from every stored result.
+
+For each past game the server computes the **residual**: what actually happened minus what the ratings alone expected at the time.
+
+```
+residual_team = (team won ? 1 : 0) − elo_only_win_probability
+head_to_head  = (residual_a − residual_b) / 2      per opposing pair
+synergy       = residual_team                       per teammate pair
+```
+
+Working from the residual — rather than a raw head-to-head win rate — is what stops the same evidence counting twice: anything the ladder has already priced in produces a residual near zero and contributes nothing. A pair's edge is their residual **sum** over `games + 20`, so one meeting is worth ~5% of its face value and twenty ~50%. Each team averages the edges of all its pairs, the result is scaled (400 rating points per 1.0 of residual), centred across teams and capped at **±120** points.
+
+In practice one prior meeting moves a 50/50 bar by ~3 points, while a settled nemesis relationship moves it by ~20 and can flip the favourite outright. Only games the ladder itself counts contribute — a strict unique winner, at least one named team, no all-zero scoreline.
+
+This affects **predictions only**. `computeEloChanges` never sees the history index, so the ladder stays a pure margin-of-victory ELO. The response also carries an `insights` array, aligned to team order, naming the pair that weighed most — which is what the UI prints under each bar. Two players can meet without either beating the other (a three-team game the third side won), so that record is printed W–L–D when such games exist: `Ann is 8–0–3 vs Bob` means eleven meetings, eight of which Ann took. The note is hidden when the history moved the bar by less than 2 rating points, so it never implies a swing that isn't visible.
+
 ### Edge cases
 
 | Situation | Behaviour |
@@ -188,3 +206,4 @@ Each team is compared pairwise against every other team. The per-player delta is
 | Tied winners (e.g. 7-7) | No win counted; S = 0.5 pairwise, plain Elo applies |
 | Server restart with existing results | ELO is bootstrapped by replaying all results in chronological order |
 | Inactive player | Loses 2 pts/day after 7-day grace, floored at 800; computed from `last_played_at`, not stored |
+| Players who have never met | No matchup term — the prediction falls back to ratings alone |
