@@ -66,20 +66,73 @@ export function resetRoom(id: string): Promise<Room> {
   return request(`/rooms/${id}/reset`, { method: 'POST' })
 }
 
+/** The pair of players whose shared history weighed most on a team's forecast. */
+export interface MatchupPair {
+  /** 'h2h' = a has faced b; 'duo' = a and b played together. */
+  kind: 'h2h' | 'duo'
+  a: string
+  b: string
+  games: number
+  /** Games a won (h2h) or the duo won together (duo). */
+  wins: number
+  losses: number
+}
+
+/** What past meetings contributed to one team's predicted win chance. */
+export interface Insight {
+  /** Signed rating points the matchup history added to this team's forecast. */
+  eloShift: number
+  topPair: MatchupPair | null
+}
+
+export interface Prediction {
+  probabilities: number[]
+  insights: Insight[]
+}
+
+/**
+ * Rating points below which the history did not visibly move the bar. The note
+ * explains the bar, so there is nothing to say under that: one strong pair among
+ * the twenty-five in a 5v5 averages down to noise, and announcing it would imply
+ * a swing the user cannot see.
+ */
+const NOTE_MIN_SHIFT = 2
+
+/**
+ * One-line rendering of the history behind a team's win chance, or null when no
+ * pair on that team has met before (or the meeting barely mattered). Both
+ * prediction views share it so the phrasing cannot drift.
+ *
+ * Two players can meet without either beating the other — a three-team game the
+ * third side won — so the record is printed W–L–D whenever such games exist,
+ * rather than silently understating how often the two have actually played.
+ */
+export function describeMatchup(insight: Insight | undefined): string | null {
+  const pair = insight?.topPair
+  if (!pair || Math.abs(insight.eloShift) < NOTE_MIN_SHIFT) return null
+  const drawn = pair.games - pair.wins - pair.losses
+  const record = drawn > 0 ? `${pair.wins}–${pair.losses}–${drawn}` : `${pair.wins}–${pair.losses}`
+  return pair.kind === 'duo'
+    ? `${pair.a} + ${pair.b} are ${record} together`
+    : `${pair.a} is ${record} vs ${pair.b}`
+}
+
 /**
  * Predicted win probabilities for a split room's teams, aligned to team order
- * and summing to 1 (empty until the room is split). Based on player ELO ratings.
+ * and summing to 1 (empty until the room is split). Based on player ELO ratings
+ * plus how the exact players involved have fared against and alongside each
+ * other before; `insights` explains that second part.
  */
-export function getRoomPrediction(id: string): Promise<{ probabilities: number[] }> {
+export function getRoomPrediction(id: string): Promise<Prediction> {
   return request(`/rooms/${id}/prediction`)
 }
 
 /**
  * Predicted win probabilities for an ad-hoc set of team lineups (e.g. the
  * home-page pair split, which has no room), aligned to input order and summing
- * to 1. Based on player ELO ratings.
+ * to 1. Same model as getRoomPrediction.
  */
-export function getPrediction(teams: string[][]): Promise<{ probabilities: number[] }> {
+export function getPrediction(teams: string[][]): Promise<Prediction> {
   return request('/predict', { method: 'POST', body: JSON.stringify({ teams }) })
 }
 

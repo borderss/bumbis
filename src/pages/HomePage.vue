@@ -293,6 +293,15 @@
                     }"
                   />
                 </div>
+                <p
+                  v-if="matchupNote(index)"
+                  :class="[
+                    index === highlightedPairIndex ? 'text-white/80' : 'text-on-surface-variant',
+                    'mt-1.5 text-xs font-bold',
+                  ]"
+                >
+                  {{ matchupNote(index) }}
+                </p>
               </div>
             </div>
             <!-- Solo Card (Odd Number) -->
@@ -374,7 +383,7 @@
 
 <script lang="ts">
 import { pairDefaultBallers } from '@/utils/defaultBallers'
-import { createRoom, getPrediction } from '@/utils/matchmaking'
+import { createRoom, describeMatchup, getPrediction, type Insight } from '@/utils/matchmaking'
 import { createWheel } from '@/utils/wheel'
 import { computed, defineComponent, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
@@ -398,6 +407,7 @@ export default defineComponent({
 
     // ELO-based win prediction for the generated pairs, aligned to pair order.
     const pairPrediction = ref<number[]>([])
+    const pairInsights = ref<Insight[]>([])
     const teamPalette = ['#97a9ff', '#ff7162', '#9BDA62', '#5F5FED', '#ffb347', '#2ec4b6']
     let predictionSeq = 0
 
@@ -408,18 +418,26 @@ export default defineComponent({
       const p = pairPrediction.value[index]
       return p === undefined ? null : Math.round(p * 100)
     }
+    function matchupNote(index: number): string | null {
+      return describeMatchup(pairInsights.value[index])
+    }
     async function loadPairPrediction() {
       const teams = pairs.value.map((p) => [...p])
       if (teams.length < 2) {
         pairPrediction.value = []
+        pairInsights.value = []
         return
       }
       const seq = ++predictionSeq
       try {
-        const { probabilities } = await getPrediction(teams)
-        if (seq === predictionSeq) pairPrediction.value = probabilities
+        const { probabilities, insights } = await getPrediction(teams)
+        if (seq !== predictionSeq) return
+        pairPrediction.value = probabilities
+        pairInsights.value = insights ?? []
       } catch {
-        if (seq === predictionSeq) pairPrediction.value = []
+        if (seq !== predictionSeq) return
+        pairPrediction.value = []
+        pairInsights.value = []
       }
     }
 
@@ -538,6 +556,7 @@ export default defineComponent({
       generatePairs,
       logPairResults,
       pairWinPct,
+      matchupNote,
       teamColor,
     }
   },
