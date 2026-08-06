@@ -10,13 +10,17 @@ import {
   SOLO_HANDICAP,
   SOLO_LOSS_MULTIPLIER,
   STREAK_BONUS_MAX,
+  STREAK_BONUS_MAX_MULTI,
   STREAK_BONUS_PER_WIN,
+  STREAK_BONUS_PER_WIN_MULTI,
   buildMatchupHistory,
   computeEloChanges,
   computeMatchupShifts,
+  nextStreak,
   pairKey,
   predictWinProbabilities,
   streakBonusMultiplier,
+  streakFor,
 } from './elo.js'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -321,6 +325,46 @@ test('the streak bonus starts on the second consecutive win and caps out', () =>
   )
 })
 
+test('a three-team streak pays more than the same run in two-team games', () => {
+  // Beating two sides is measurably rarer (34.1% against 50.5% in this group's
+  // 222 games), so the same run length is worth more.
+  assert.ok(streakBonusMultiplier(3, 3) > streakBonusMultiplier(3, 2), 'the harder run pays more')
+  assert.equal(streakBonusMultiplier(1, 3), 1 + STREAK_BONUS_PER_WIN_MULTI)
+  assert.equal(streakBonusMultiplier(99, 3), 1 + STREAK_BONUS_MAX_MULTI, 'the multi cap holds')
+
+  const ratio = STREAK_BONUS_PER_WIN_MULTI / STREAK_BONUS_PER_WIN
+  assert.ok(Math.abs(ratio - 1.5) < 1e-9, 'the rate is 1.5x, matching the 1.48x odds ratio')
+  assert.ok(
+    Math.abs(STREAK_BONUS_MAX_MULTI / STREAK_BONUS_MAX - ratio) < 1e-9,
+    'the cap scales by the same factor, so both formats cap at a 5-win run',
+  )
+
+  // Four teams is still the "multi" bucket — the rule is 3-or-more, not exactly 3.
+  assert.equal(streakBonusMultiplier(2, 4), streakBonusMultiplier(2, 3))
+  // An unmigrated caller passing no format must get the smaller two-team rate.
+  assert.equal(streakBonusMultiplier(2), streakBonusMultiplier(2, 2))
+})
+
+test('the bigger three-team bonus reaches the actual rating delta', () => {
+  const names = ['W1', 'W2', 'A1', 'A2', 'B1', 'B2']
+  const lineups = [
+    ['W1', 'W2'],
+    ['A1', 'A2'],
+    ['B1', 'B2'],
+  ]
+  const run = (winStreak) =>
+    new Map(names.map((n) => [n, { rating: 1200, gamesPlayed: 30, winStreak }]))
+
+  const idle = computeEloChanges(played(lineups, [10, 6, 4]), run({ duel: 0, multi: 0 }))
+  const hot = computeEloChanges(played(lineups, [10, 6, 4]), run({ duel: 0, multi: 3 }))
+
+  const ratio = hot.get('W1').delta / idle.get('W1').delta
+  assert.ok(
+    Math.abs(ratio - (1 + STREAK_BONUS_PER_WIN_MULTI * 3)) < 1e-9,
+    `a 3-win three-team run should apply the multi rate, got ${ratio}`,
+  )
+})
+
 test('the streak bonus only lifts the winner, and only their gain', () => {
   const names = ['W1', 'W2', 'L1', 'L2']
   const cold = new Map(names.map((n) => [n, { rating: 1200, gamesPlayed: 30, winStreak: 0 }]))
@@ -340,4 +384,54 @@ test('the streak bonus only lifts the winner, and only their gain', () => {
     Math.abs(b.get('W1').delta / a.get('W1').delta - (1 + STREAK_BONUS_MAX)) < 1e-9,
     'a 5-win streak should apply exactly the capped multiplier',
   )
+})
+
+test('a two-team streak pays nothing in a three-team game', () => {
+  const names = ['W1', 'W2', 'A1', 'A2', 'B1', 'B2']
+  const lineups = [
+    ['W1', 'W2'],
+    ['A1', 'A2'],
+    ['B1', 'B2'],
+  ]
+  const scores = [10, 6, 4]
+
+  const idle = new Map(names.map((n) => [n, { rating: 1200, gamesPlayed: 30, winStreak: { duel: 0, multi: 0 } }]))
+  // A long run built in two-team games, with nothing yet in three-team ones.
+  const duelRun = new Map(
+    names.map((n) => [n, { rating: 1200, gamesPlayed: 30, winStreak: { duel: 5, multi: 0 } }]),
+  )
+  const multiRun = new Map(
+    names.map((n) => [n, { rating: 1200, gamesPlayed: 30, winStreak: { duel: 0, multi: 5 } }]),
+  )
+
+  const base = computeEloChanges(played(lineups, scores), idle).get('W1').delta
+  const carried = computeEloChanges(played(lineups, scores), duelRun).get('W1').delta
+  const earned = computeEloChanges(played(lineups, scores), multiRun).get('W1').delta
+
+  assert.equal(carried, base, 'a run built in 2v2 must not boost a three-team win')
+  assert.ok(earned > base, 'a run built in three-team games still pays there')
+})
+
+test('a streak in one format survives a loss in the other', () => {
+  const prior = { duel: 0, multi: 4 }
+
+  // Losing a two-team game clears the duel counter and leaves multi standing.
+  const afterDuelLoss = nextStreak(prior, false, 2)
+  assert.equal(afterDuelLoss.multi, 4, 'the three-team run is independent of a two-team loss')
+  assert.equal(afterDuelLoss.duel, 0)
+
+  // Losing a three-team game is what actually ends that run.
+  assert.equal(nextStreak(prior, false, 3).multi, 0, 'a three-team loss ends the three-team run')
+
+  assert.equal(nextStreak(prior, true, 3).multi, 5, 'a three-team win extends it')
+  assert.equal(nextStreak(prior, true, 2).duel, 1, 'a two-team win starts the two-team run')
+})
+
+test('streakFor reads a plain number as a single shared counter', () => {
+  // Callers that still hand over one number must not silently lose their bonus.
+  assert.equal(streakFor({ winStreak: 3 }, 2), 3)
+  assert.equal(streakFor({ winStreak: 3 }, 3), 3)
+  assert.equal(streakFor({ winStreak: { duel: 1, multi: 7 } }, 2), 1)
+  assert.equal(streakFor({ winStreak: { duel: 1, multi: 7 } }, 3), 7)
+  assert.equal(streakFor(undefined, 3), 0)
 })
