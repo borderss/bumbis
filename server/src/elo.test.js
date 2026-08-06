@@ -10,7 +10,9 @@ import {
   SOLO_HANDICAP,
   SOLO_LOSS_MULTIPLIER,
   STREAK_BONUS_MAX,
+  STREAK_BONUS_MAX_MULTI,
   STREAK_BONUS_PER_WIN,
+  STREAK_BONUS_PER_WIN_MULTI,
   buildMatchupHistory,
   computeEloChanges,
   computeMatchupShifts,
@@ -320,6 +322,46 @@ test('the streak bonus starts on the second consecutive win and caps out', () =>
   assert.ok(
     STREAK_BONUS_MAX / STREAK_BONUS_PER_WIN === 5,
     'the cap should still be reached at a 5-win streak',
+  )
+})
+
+test('a three-team streak pays more than the same run in two-team games', () => {
+  // Beating two sides is measurably rarer (34.1% against 50.5% in this group's
+  // 222 games), so the same run length is worth more.
+  assert.ok(streakBonusMultiplier(3, 3) > streakBonusMultiplier(3, 2), 'the harder run pays more')
+  assert.equal(streakBonusMultiplier(1, 3), 1 + STREAK_BONUS_PER_WIN_MULTI)
+  assert.equal(streakBonusMultiplier(99, 3), 1 + STREAK_BONUS_MAX_MULTI, 'the multi cap holds')
+
+  const ratio = STREAK_BONUS_PER_WIN_MULTI / STREAK_BONUS_PER_WIN
+  assert.ok(Math.abs(ratio - 1.5) < 1e-9, 'the rate is 1.5x, matching the 1.48x odds ratio')
+  assert.ok(
+    Math.abs(STREAK_BONUS_MAX_MULTI / STREAK_BONUS_MAX - ratio) < 1e-9,
+    'the cap scales by the same factor, so both formats cap at a 5-win run',
+  )
+
+  // Four teams is still the "multi" bucket — the rule is 3-or-more, not exactly 3.
+  assert.equal(streakBonusMultiplier(2, 4), streakBonusMultiplier(2, 3))
+  // An unmigrated caller passing no format must get the smaller two-team rate.
+  assert.equal(streakBonusMultiplier(2), streakBonusMultiplier(2, 2))
+})
+
+test('the bigger three-team bonus reaches the actual rating delta', () => {
+  const names = ['W1', 'W2', 'A1', 'A2', 'B1', 'B2']
+  const lineups = [
+    ['W1', 'W2'],
+    ['A1', 'A2'],
+    ['B1', 'B2'],
+  ]
+  const run = (winStreak) =>
+    new Map(names.map((n) => [n, { rating: 1200, gamesPlayed: 30, winStreak }]))
+
+  const idle = computeEloChanges(played(lineups, [10, 6, 4]), run({ duel: 0, multi: 0 }))
+  const hot = computeEloChanges(played(lineups, [10, 6, 4]), run({ duel: 0, multi: 3 }))
+
+  const ratio = hot.get('W1').delta / idle.get('W1').delta
+  assert.ok(
+    Math.abs(ratio - (1 + STREAK_BONUS_PER_WIN_MULTI * 3)) < 1e-9,
+    `a 3-win three-team run should apply the multi rate, got ${ratio}`,
   )
 })
 

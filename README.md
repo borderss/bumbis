@@ -158,7 +158,31 @@ streak_mult = 1 + min(STREAK_BONUS_MAX, STREAK_BONUS_PER_WIN × prior_streak)
 delta_winner = streak_mult × K × average over opponents of (mov × acf × (S − E))
 ```
 
-`STREAK_BONUS_PER_WIN = 0.05` (+5% per prior consecutive win) and `STREAK_BONUS_MAX = 0.25` (capped at +25%, reached at a 5-win streak).
+The rate depends on the format, because the odds do:
+
+| Constant | 2 teams | 3+ teams |
+|---|---|---|
+| `STREAK_BONUS_PER_WIN` / `_MULTI` | +5 % per prior win | +7.5 % per prior win |
+| `STREAK_BONUS_MAX` / `_MULTI` | +25 % | +37.5 % |
+
+Both cap at a 5-win run. The three-team rate is **1.5×** the two-team one, set
+from the measured odds: over 222 games in this group a player won 50.5 % of the
+two-team games they played and 34.1 % of the three-team ones, so a single
+three-team win is 1.48× rarer.
+
+| Prior streak | 2 teams | 3+ teams |
+|---|---|---|
+| 0 (first win) | 1.00 | 1.00 |
+| 1 | 1.05 | 1.075 |
+| 2 | 1.10 | 1.15 |
+| 5+ | 1.25 | 1.375 |
+
+The premium is deliberately **flat, not compounded**. Rarity compounds with run
+length — a 3-win three-team run is 3.2× rarer than the same run in 2v2, and a
+5-win run 7.1× — so paying the true odds would make three-team games the only
+place rating is meaningfully made. A flat 1.5× prices the harder win without
+swamping the ladder. It costs 127 points of drift over a 222-game season (621
+against 494 at equal rates).
 
 **Streaks are counted per format.** Two-team and three-team games keep separate
 counters (`player_elo.win_streak` and `win_streak_multi`), because winning with
@@ -182,16 +206,9 @@ The streaks *reported* as fun facts — longest win streak, current streak — a
 counted separately over a player's whole history, across every format. Those are
 records about the player; the per-format counters are a rating mechanism.
 
-| Prior streak | Multiplier |
-|---|---|
-| 0 (first win) | 1.00 |
-| 1 | 1.05 |
-| 2 | 1.10 |
-| 5+ | 1.25 |
+Only the **winner's** gain is amplified — the opponent's loss is unchanged, so streaks inject points. Any non-win — a loss *or* a tied-top result — resets that format's streak to zero. The streaks are stored per player (`player_elo.win_streak` for two-team runs, `win_streak_multi` for three-or-more) and, like all ratings, recomputed from scratch when the server replays results on startup.
 
-Only the **winner's** gain is amplified — the opponent's loss is unchanged, so streaks inject points. Any non-win — a loss *or* a tied-top result — resets the streak to zero, matching the `currentWinStreak` definition used by the fun facts. The streak is stored per player (`player_elo.win_streak`) and, like all ratings, recomputed from scratch when the server replays results on startup.
-
-**This bonus is where the scale drifts.** Replaying a season at this group's format mix (87 two-team, 135 three-team games) injects roughly 1100 points at the old +10%/+50% setting and about 25 points with the bonus switched off — the rest of the model is very nearly zero-sum. The injection spreads evenly across players regardless of win rate, so it does not distort the order; it just walks the whole scale away from the 1200 everyone starts at. Halving the constants halves the drift to ~580 points and costs nothing visible: the average rating change per game moves from 32.9 to 32.5, because the swing comes from `K` and margin-of-victory, not from this.
+**This bonus is where the scale drifts.** Replaying the group's 222 logged games injects roughly 1100 points at the old +10 %/+50 % setting and nothing with the bonus switched off — the rest of the model is very nearly zero-sum. The injection spreads evenly across players regardless of win rate, so it does not distort the order; it just walks the whole scale away from the 1200 everyone starts at. At the current constants the drift is 621 points, and it costs nothing visible: the average rating change per game barely moves, because the swing comes from `K` and margin-of-victory, not from this.
 
 Splitting the streak per format does **not** reduce the drift — see above; it is
 in the model for fairness, not for inflation.
