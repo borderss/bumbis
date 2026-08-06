@@ -5,6 +5,7 @@ import {
   decayedRating,
   graceDaysFor,
   initialRatingFor,
+  nextStreak,
   resolvePlayers,
 } from './elo.js'
 
@@ -218,7 +219,9 @@ export function computeFunFacts(results, leaderboard = []) {
     if (!Array.isArray(teams) || teams.length < 2) continue
 
     // winStreak has to travel with the rating or computeEloChanges skips the
-    // win-streak bonus and the replay drifts from the live ratings.
+    // win-streak bonus and the replay drifts from the live ratings. It is the
+    // per-format record, matching the ladder — the streaks *reported* as facts
+    // below are counted separately, over a player's whole history.
     const ratingsMap = new Map()
     for (const [name, info] of running) {
       ratingsMap.set(name, {
@@ -426,15 +429,16 @@ export function computeFunFacts(results, leaderboard = []) {
         rating: change.oldRating,
         gamesPlayed: 0,
         wins: 0,
-        winStreak: 0,
+        winStreak: { duel: 0, multi: 0 },
         lastPlayedAt: playedAt,
       }
       info.rating = Math.max(RATING_FLOOR, change.oldRating + change.delta)
       info.gamesPlayed += 1
       info.lastPlayedAt = playedAt
       if (change.won) info.wins += 1
-      // Mirror applyEloChanges: extend on a win, reset on any non-win (loss or tied top).
-      info.winStreak = change.won ? info.winStreak + 1 : 0
+      // Mirror applyEloChanges: extend this format's run on a win, reset it on
+      // any non-win (loss or tied top), leave the other format's alone.
+      info.winStreak = nextStreak(info.winStreak, change.won, teams.length)
       running.set(name, info)
     }
 
