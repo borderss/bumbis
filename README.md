@@ -118,13 +118,27 @@ R_eff = avg_rating + SIZE_HANDICAP × (team_size − opponent_size)
 
 `SIZE_HANDICAP = 150`. Sizes are relative to the specific opponent, so the handicap updates for each pairing in a multi-team game.
 
+### Playing a man down (2v2v1)
+
+A **one-player team** is the exception. Rather than take the size handicap for the missing body, the empty slot is filled with a phantom teammate, so the team rates below the player themselves:
+
+```
+team_rating = player_rating × (1 − SOLO_HANDICAP)
+```
+
+`SOLO_HANDICAP = 0.35`, so the team rates at **65 %** of the lone player — the phantom is worth roughly 30 % of a real teammate. The phantom also brings the roster to two, so `SIZE_HANDICAP` no longer fires for the missing body and the two mechanisms cannot double-count. It is opponent-strength bookkeeping only: the phantom never gains or loses rating, and the real player still banks their team's whole delta.
+
+The discount alone would make the solo slot the seat everyone wants — an expectation that low means defeat costs almost nothing. `SOLO_LOSS_MULTIPLIER = 2` pays that back: **a lone player's losses count double**. Only losses scale; a win is already priced by the discount.
+
 | Scenario | Solo pairEff | Duo pairEff | Solo win probability |
 |---|---|---|---|
-| 1v2, equal ratings (1200) | 1050 | 1350 | ≈ 15 % |
-| 1v2, solo is 200 pts stronger | 1250 | 1350 | ≈ 36 % |
+| 2v2v1, equal ratings (1200) | 780 | 1200 | ≈ 8 % |
 | 2v2, equal ratings | 1200 | 1200 | 50 % |
+| 1v1, equal ratings | 1200 | 1200 | 50 % |
 
-A solo player who beats a duo earns a large rating gain (high MoV + underdog acf > 1). Losing costs very little (low expected E for the solo).
+The rule fires only for a genuine one-player roster facing partnered opposition. A game where nobody has a partner (1v1, 1v1v1) leaves no one outnumbered, so ratings are untouched — otherwise every head-to-head gap would compress. An anonymous team is a placeholder for unknown opposition, already pinned at `INITIAL_RATING` and size 1, and is not discounted either.
+
+At this group's rating spread the solo slot is still a long shot rather than a fair third of the game. In a 2v2v1 the format is a gamble by design: a win pays roughly double what the same result pays in 2v2v2, and second place still pays.
 
 ### K-factor progression
 
@@ -144,16 +158,20 @@ streak_mult = 1 + min(STREAK_BONUS_MAX, STREAK_BONUS_PER_WIN × prior_streak)
 delta_winner = streak_mult × K × average over opponents of (mov × acf × (S − E))
 ```
 
-`STREAK_BONUS_PER_WIN = 0.10` (+10% per prior consecutive win) and `STREAK_BONUS_MAX = 0.50` (capped at +50%, reached at a 5-win streak).
+`STREAK_BONUS_PER_WIN = 0.05` (+5% per prior consecutive win) and `STREAK_BONUS_MAX = 0.25` (capped at +25%, reached at a 5-win streak).
 
 | Prior streak | Multiplier |
 |---|---|
 | 0 (first win) | 1.00 |
-| 1 | 1.10 |
-| 2 | 1.20 |
-| 5+ | 1.50 |
+| 1 | 1.05 |
+| 2 | 1.10 |
+| 5+ | 1.25 |
 
-Only the **winner's** gain is amplified — the opponent's loss is unchanged, so streaks inject points (the system is already non-zero-sum). Any non-win — a loss *or* a tied-top result — resets the streak to zero, matching the `currentWinStreak` definition used by the fun facts. The streak is stored per player (`player_elo.win_streak`) and, like all ratings, recomputed from scratch when the server replays results on startup.
+Only the **winner's** gain is amplified — the opponent's loss is unchanged, so streaks inject points. Any non-win — a loss *or* a tied-top result — resets the streak to zero, matching the `currentWinStreak` definition used by the fun facts. The streak is stored per player (`player_elo.win_streak`) and, like all ratings, recomputed from scratch when the server replays results on startup.
+
+**This bonus is where the scale drifts.** Replaying a season at this group's format mix (87 two-team, 135 three-team games) injects roughly 1100 points at the old +10%/+50% setting and about 25 points with the bonus switched off — the rest of the model is very nearly zero-sum. The injection spreads evenly across players regardless of win rate, so it does not distort the order; it just walks the whole scale away from the 1200 everyone starts at. Halving the constants halves the drift to ~580 points and costs nothing visible: the average rating change per game moves from 32.9 to 32.5, because the swing comes from `K` and margin-of-victory, not from this.
+
+Splitting the streak per format (a separate counter for 2-team and 3-team games) was measured and does **not** reduce the drift — it redistributes the same wins across two counters and injects the same total. It would be a fair change for its own sake, since a streak within one format is a more meaningful thing to report, but not as an inflation fix.
 
 ### Handling the "best player with worst player" case
 
@@ -201,7 +219,9 @@ This affects **predictions only**. `computeEloChanges` never sees the history in
 | New non-default player | Starts at 1000, K = 120 |
 | Team with no named players | Skipped — no ELO update for that team |
 | Fewer than 2 teams with players | Entire game skipped for ELO |
-| 1v2 (asymmetric team size) | Size penalised via additive handicap (SIZE_HANDICAP = 150) |
+| Lone player vs partnered teams (2v2v1) | Team rates at 65 % of the player (phantom teammate); their losses count double |
+| 1v1 / 1v1v1 (nobody has a partner) | No man-down discount — ratings used as-is |
+| Other asymmetric sizes (2v3) | Size penalised via additive handicap (SIZE_HANDICAP = 150) |
 | All scores are 0 | Rejected with 400 (API); silently skipped during legacy ELO replay |
 | Tied winners (e.g. 7-7) | No win counted; S = 0.5 pairwise, plain Elo applies |
 | Server restart with existing results | ELO is bootstrapped by replaying all results in chronological order |
