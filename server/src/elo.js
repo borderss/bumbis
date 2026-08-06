@@ -24,8 +24,12 @@ const _require = createRequire(import.meta.url)
  *
  * 2. Additive size handicap (replaces old √(team_size) model)
  *    R_eff = avg_rating + SIZE_HANDICAP × (team_size − opponent_size)
- *    Computed per pairwise comparison; equal-skill 1v2 yields E_solo ≈ 0.15.
- *    Anonymous teams use INITIAL_RATING and size 1.
+ *    Computed per pairwise comparison. Anonymous teams use INITIAL_RATING and
+ *    size 1.
+ *
+ *    A one-player team is handled separately: rather than take the handicap for
+ *    a missing body, it is padded with a phantom teammate and rates at
+ *    (1 − SOLO_HANDICAP) of the player. See "Playing a man down".
  *
  * 3. Multi-team games handled via pairwise averaging
  *    Each team compared against every other; per-player delta is the average of
@@ -62,12 +66,41 @@ export const INITIAL_RATING = 1200 // starting rating for default ballers / unkn
 export const NON_BALLER_INITIAL_RATING = 1000 // newcomers outside the regular roster start lower
 export const SIZE_HANDICAP = 150 // additive eff-rating bonus per extra teammate vs the specific opponent
 
+// --- Playing a man down -------------------------------------------------------
+// A lone player facing partnered opposition is short a teammate. The empty slot
+// is filled with a phantom, so the team rates below the player themselves:
+//
+//   team_rating = player_rating × (1 − SOLO_HANDICAP)
+//
+// A phantom rated 0 would halve it, which reads as too harsh — being alone is a
+// disadvantage, not a 50% one. At 0.35 the team rates at 65% of the player, i.e.
+// the phantom is worth about 30% of a real teammate.
+//
+// The discount alone would make the solo slot the best seat in the game: an
+// expectation that low means a defeat costs almost nothing, so simply being the
+// odd one out would be worth playing for. SOLO_LOSS_MULTIPLIER pays that back —
+// a lone player's losses count double, so the position stays a gamble rather than
+// free money. Only their losses scale; a win is already priced by the discount.
+export const SOLO_HANDICAP = 0.35
+export const SOLO_LOSS_MULTIPLIER = 2
+
 // --- Win-streak bonus ---------------------------------------------------------
 // Players on a hot streak earn extra rating on each further win. The multiplier
 // is keyed off the streak carried INTO the game, so the 2nd win in a row is the
 // first to be boosted. Only the winner's positive delta is scaled.
-export const STREAK_BONUS_PER_WIN = 0.1 // +10% delta per prior consecutive win
-export const STREAK_BONUS_MAX = 0.5 // capped at +50% (reached at a 5-win streak)
+//
+// The bonus is the one part of the model that mints rating from nowhere, and it
+// turns out to be nearly all of it: replaying a season at this group's format mix
+// (87 two-team, 135 three-team games) injects ~1100 points with the bonus and ~25
+// without — the rest of the model is very close to zero-sum. The injection spreads
+// evenly across players regardless of win rate, so it does not distort the order,
+// but it does drift the whole scale away from the 1200 everyone starts at.
+//
+// Halving it halves the drift, and costs nothing that shows: the average rating
+// change per game moves from 32.9 to 32.5 points, because the swing comes from
+// the K-factor and margin-of-victory, not from this.
+export const STREAK_BONUS_PER_WIN = 0.05 // +5% delta per prior consecutive win
+export const STREAK_BONUS_MAX = 0.25 // capped at +25% (reached at a 5-win streak)
 
 /** Multiplier applied to a winner's delta given the streak they brought in. */
 export function streakBonusMultiplier(priorStreak) {
@@ -155,6 +188,33 @@ function teamAvgRating(players, currentRatings) {
   if (players.length === 0) return INITIAL_RATING
   const ratings = players.map((name) => currentRatings.get(name)?.rating ?? initialRatingFor(name))
   return ratings.reduce((a, b) => a + b, 0) / ratings.length
+}
+
+/**
+ * How the model sees one team: its mean rating, the size used for the pairwise
+ * handicap, and whether it is a lone player carrying a phantom teammate.
+ *
+ * The phantom brings the roster up to two, so SIZE_HANDICAP no longer fires for
+ * the missing body — the discount is the whole of the adjustment and the two
+ * mechanisms cannot double-count. It is opponent-strength bookkeeping only: it
+ * is never in `players`, so it neither gains nor loses rating.
+ *
+ * It applies only to a genuine one-player roster. An anonymous team already
+ * stands in at INITIAL_RATING as a placeholder for unknown opposition, and a
+ * game where nobody has a partner (1v1, 1v1v1) leaves no one outnumbered.
+ */
+function effectiveTeam(players, currentRatings, largestTeamSize) {
+  const avgRating = teamAvgRating(players, currentRatings)
+  const size = players.length > 0 ? players.length : 1 // anonymous teams count as size 1
+  if (players.length === 1 && largestTeamSize > 1) {
+    return { size: 2, avgRating: avgRating * (1 - SOLO_HANDICAP), solo: true }
+  }
+  return { size, avgRating, solo: false }
+}
+
+/** Largest real roster in a game — what a lone player is measured as short of. */
+function largestRoster(lineups) {
+  return lineups.reduce((m, p) => Math.max(m, p.length), 0)
 }
 
 // --- Matchup history ----------------------------------------------------------
@@ -399,14 +459,14 @@ export function computeMatchupShifts(lineups, history) {
 export function predictWinProbabilities(teams, currentRatings, history = null) {
   if (!Array.isArray(teams) || teams.length === 0) return []
   const lineups = teams.map((t) => (Array.isArray(t) ? t : resolvePlayers(t)))
-  const sizes = lineups.map((p) => Math.max(1, p.length)) // anonymous teams count as size 1
   const n = lineups.length
+  const biggest = largestRoster(lineups)
+  const effective = lineups.map((players) => effectiveTeam(players, currentRatings, biggest))
+  const sizes = effective.map((e) => e.size)
   const totalSize = sizes.reduce((a, b) => a + b, 0)
   const shifts = history ? computeMatchupShifts(lineups, history) : null
 
-  const weights = lineups.map((players, i) => {
-    const avgRating = teamAvgRating(players, currentRatings)
-    const size = sizes[i]
+  const weights = effective.map(({ avgRating, size }, i) => {
     const meanOtherSize = (totalSize - size) / (n - 1)
     const eff = avgRating + SIZE_HANDICAP * (size - meanOtherSize) + (shifts?.[i].eloShift ?? 0)
     return Math.pow(10, eff / 400)
@@ -433,14 +493,19 @@ export function computeEloChanges(teams, currentRatings) {
   const maxScore = Math.max(...scores)
   const maxCount = scores.filter((s) => s === maxScore).length
 
-  const enriched = teams.map((team) => {
-    const players = resolvePlayers(team)
+  const lineups = teams.map(resolvePlayers)
+  const biggest = largestRoster(lineups)
+  const enriched = teams.map((team, i) => {
+    const players = lineups[i]
+    // A lone player against partnered opposition rates at half, on a roster of
+    // two — see effectiveTeam.
+    const { size, avgRating, solo } = effectiveTeam(players, currentRatings, biggest)
     return {
       players,
       score: team.score,
-      // Anonymous teams are treated as size 1 for handicap purposes.
-      size: players.length > 0 ? players.length : 1,
-      avgRating: teamAvgRating(players, currentRatings),
+      size,
+      avgRating,
+      solo,
       // won is true only for the unique top scorer.
       won: team.score === maxScore && maxCount === 1,
       anonymous: players.length === 0,
@@ -492,13 +557,18 @@ export function computeEloChanges(teams, currentRatings) {
 
     const pairwiseDelta = pairwiseSum / (n - 1)
 
+    // Playing a man down already prices a defeat as near-costless, which would
+    // make the solo slot the seat everyone wants. Doubling the loss keeps it a
+    // gamble. Losses only — a win is priced by the rating discount alone.
+    const soloLossMult = teamA.solo && pairwiseDelta < 0 ? SOLO_LOSS_MULTIPLIER : 1
+
     for (const name of teamA.players) {
       const entry = currentRatings.get(name)
       const gp = entry?.gamesPlayed ?? 0
       // Only winners are boosted; the bonus uses the streak carried into the game.
       const streakMult = teamA.won ? streakBonusMultiplier(entry?.winStreak ?? 0) : 1
       changes.set(name, {
-        delta: kFactor(gp) * pairwiseDelta * streakMult,
+        delta: kFactor(gp) * pairwiseDelta * streakMult * soloLossMult,
         oldRating: entry?.rating ?? initialRatingFor(name),
         won: teamA.won,
         gamesPlayed: gp,

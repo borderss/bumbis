@@ -1,15 +1,22 @@
 // Run: node --test src/elo.test.js
-// Covers the matchup-history layer on top of the rating model: that a
-// history-free prediction is untouched, that a real head-to-head or duo record
-// moves the forecast, and that a single game barely does.
+// Covers the matchup-history layer on top of the rating model — a history-free
+// prediction is untouched, a real head-to-head or duo record moves the forecast,
+// a single game barely does — plus the rules for a lone player facing partnered
+// opposition and the win-streak bonus.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   HISTORY_MAX_ELO,
+  SOLO_HANDICAP,
+  SOLO_LOSS_MULTIPLIER,
+  STREAK_BONUS_MAX,
+  STREAK_BONUS_PER_WIN,
   buildMatchupHistory,
+  computeEloChanges,
   computeMatchupShifts,
   pairKey,
   predictWinProbabilities,
+  streakBonusMultiplier,
 } from './elo.js'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -216,4 +223,121 @@ test('history is built from the ratings that stood at the time, not from itself'
   assert.equal(rec.aWins, 2)
   // First residual is 0.5 (dead-even ratings); the second must be smaller.
   assert.ok(rec.sum > 0 && rec.sum < 1, `expected diminishing residuals, got ${rec.sum}`)
+})
+
+// --- Playing a man down -------------------------------------------------------
+
+/** A finished game in the shape computeEloChanges takes. */
+function played(lineups, scores) {
+  return lineups.map((players, i) => ({ name: `T${i + 1}`, players, score: scores[i] }))
+}
+/** Everyone equal, past the K=120 window, no streaks — only size can differ. */
+function evenRatings(names, rating = 1200) {
+  return new Map(names.map((n) => [n, { rating, gamesPlayed: 30, winStreak: 0 }]))
+}
+
+test('a lone player against partnered opposition rates below themselves', () => {
+  const names = ['A1', 'A2', 'B1', 'B2', 'S']
+  const ratings = evenRatings(names)
+  const [, , solo] = predictWinProbabilities([['A1', 'A2'], ['B1', 'B2'], ['S']], ratings)
+
+  // The team rates at (1 - SOLO_HANDICAP) of the player, and the phantom fills
+  // the roster to two so the size handicap no longer fires on top of it.
+  const expected = 1 / (1 + 2 * Math.pow(10, (1200 - 1200 * (1 - SOLO_HANDICAP)) / 400))
+  assert.ok(
+    Math.abs(solo - expected) < 0.005,
+    `solo should sit at the discount alone, got ${solo} vs ${expected}`,
+  )
+  assert.ok(solo < 1 / 3, 'being a man down has to be a disadvantage')
+})
+
+test('nobody is a man down when no team has a partner', () => {
+  // 1v1 and 1v1v1: everyone is alone, so nobody is short a teammate and the
+  // discount must not fire — otherwise every head-to-head gap would compress.
+  const ratings = new Map([
+    ['A', { rating: 1400, gamesPlayed: 30, winStreak: 0 }],
+    ['B', { rating: 1000, gamesPlayed: 30, winStreak: 0 }],
+  ])
+  const [a] = predictWinProbabilities([['A'], ['B']], ratings)
+  const undiscounted = 1 / (1 + Math.pow(10, (1000 - 1400) / 400))
+  assert.ok(Math.abs(a - undiscounted) < 1e-9, `1v1 must be untouched, got ${a}`)
+})
+
+test("a lone player's losses count double, their wins do not", () => {
+  const names = ['A1', 'A2', 'B1', 'B2', 'S']
+  const lineups = [['A1', 'A2'], ['B1', 'B2'], ['S']]
+
+  const lost = computeEloChanges(played(lineups, [10, 6, 4]), evenRatings(names)).get('S').delta
+  const won = computeEloChanges(played(lineups, [6, 4, 10]), evenRatings(names)).get('S').delta
+  assert.ok(lost < 0 && won > 0)
+
+  // Same game with the solo slot filled: the discount and the multiplier both go
+  // away, so this is the undiscounted comparison point.
+  const full = [['A1', 'A2'], ['B1', 'B2'], ['S', 'S2']]
+  const names2 = [...names, 'S2']
+  const fullLoss = computeEloChanges(played(full, [10, 6, 4]), evenRatings(names2)).get('S').delta
+  assert.ok(
+    Math.abs(lost) < Math.abs(fullLoss),
+    'even doubled, a man-down loss should cost less than a full-team one',
+  )
+
+  // The multiplier is the only thing separating the raw loss from the booked one.
+  const soloOnly = computeEloChanges(played(lineups, [10, 6, 4]), evenRatings(names))
+  assert.equal(soloOnly.get('S').won, false)
+  assert.ok(
+    SOLO_LOSS_MULTIPLIER > 1,
+    'the discount alone would make the solo slot free money; the multiplier is the counterweight',
+  )
+})
+
+test('an anonymous team is not given the man-down discount', () => {
+  // An anonymous side is a placeholder for unknown opposition, already pinned at
+  // INITIAL_RATING and size 1. Discounting it as if it were a lone player would
+  // quietly rewrite what beating an unknown opponent is worth.
+  const ratings = evenRatings(['A1', 'A2', 'S'])
+  const [vsAnon] = predictWinProbabilities([['A1', 'A2'], []], ratings)
+  const [vsNamedSolo] = predictWinProbabilities([['A1', 'A2'], ['S']], ratings)
+
+  assert.ok(
+    vsNamedSolo > vsAnon,
+    `a named lone player takes the discount and an anonymous stand-in does not, ` +
+      `so the pair should be the bigger favourite against the named solo ` +
+      `(${vsNamedSolo} vs ${vsAnon})`,
+  )
+  // The anonymous side keeps the plain size handicap: 1200+150 against 1200-150.
+  const plainHandicap = 1 / (1 + Math.pow(10, (1200 - 150 - (1200 + 150)) / 400))
+  assert.ok(Math.abs(vsAnon - plainHandicap) < 1e-9, `got ${vsAnon}`)
+})
+
+// --- Win-streak bonus ---------------------------------------------------------
+
+test('the streak bonus starts on the second consecutive win and caps out', () => {
+  assert.equal(streakBonusMultiplier(0), 1, 'a first win is not boosted')
+  assert.equal(streakBonusMultiplier(1), 1 + STREAK_BONUS_PER_WIN)
+  assert.equal(streakBonusMultiplier(99), 1 + STREAK_BONUS_MAX, 'the cap holds')
+  assert.ok(
+    STREAK_BONUS_MAX / STREAK_BONUS_PER_WIN === 5,
+    'the cap should still be reached at a 5-win streak',
+  )
+})
+
+test('the streak bonus only lifts the winner, and only their gain', () => {
+  const names = ['W1', 'W2', 'L1', 'L2']
+  const cold = new Map(names.map((n) => [n, { rating: 1200, gamesPlayed: 30, winStreak: 0 }]))
+  const hot = new Map(names.map((n) => [n, { rating: 1200, gamesPlayed: 30, winStreak: 5 }]))
+  const lineups = [['W1', 'W2'], ['L1', 'L2']]
+
+  const a = computeEloChanges(played(lineups, [10, 6]), cold)
+  const b = computeEloChanges(played(lineups, [10, 6]), hot)
+
+  assert.ok(b.get('W1').delta > a.get('W1').delta, 'a hot winner gains more')
+  assert.equal(
+    b.get('L1').delta,
+    a.get('L1').delta,
+    'the loser pays the same either way — the bonus is minted, not transferred',
+  )
+  assert.ok(
+    Math.abs(b.get('W1').delta / a.get('W1').delta - (1 + STREAK_BONUS_MAX)) < 1e-9,
+    'a 5-win streak should apply exactly the capped multiplier',
+  )
 })
