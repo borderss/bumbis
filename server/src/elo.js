@@ -102,6 +102,44 @@ export const SOLO_LOSS_MULTIPLIER = 2
 export const STREAK_BONUS_PER_WIN = 0.05 // +5% delta per prior consecutive win
 export const STREAK_BONUS_MAX = 0.25 // capped at +25% (reached at a 5-win streak)
 
+/**
+ * Which streak counter a game belongs to, keyed by how many teams played.
+ *
+ * Streaks are tracked per format because winning three-team games and winning
+ * two-team games are not the same achievement — a third side to beat makes the
+ * run rarer. Carrying one into the other let a 2v2 run pay out on a 2v2v2 win it
+ * had not earned, and vice versa. Counters are independent: losing a two-team
+ * game does not reset a three-team run, so a run can sit idle across a stretch
+ * of the other format and still pay when that format comes back around.
+ */
+export function streakBucket(teamCount) {
+  return teamCount >= 3 ? 'multi' : 'duel'
+}
+
+/**
+ * The streak a player carries into a game of this format. Accepts either the
+ * per-format record ({ duel, multi }) or a plain number, so a caller that has
+ * not been migrated still reads as a single shared counter rather than throwing.
+ */
+export function streakFor(entry, teamCount) {
+  const s = entry?.winStreak
+  if (typeof s === 'number') return s
+  return s?.[streakBucket(teamCount)] ?? 0
+}
+
+/**
+ * Advance a per-format streak record after a game: the played format extends on
+ * a win and resets on any non-win, the other format is left untouched.
+ */
+export function nextStreak(prevStreak, won, teamCount) {
+  const prev = typeof prevStreak === 'number' ? { duel: prevStreak, multi: prevStreak } : prevStreak
+  const bucket = streakBucket(teamCount)
+  return {
+    duel: bucket === 'duel' ? (won ? (prev?.duel ?? 0) + 1 : 0) : prev?.duel ?? 0,
+    multi: bucket === 'multi' ? (won ? (prev?.multi ?? 0) + 1 : 0) : prev?.multi ?? 0,
+  }
+}
+
 /** Multiplier applied to a winner's delta given the streak they brought in. */
 export function streakBonusMultiplier(priorStreak) {
   if (!priorStreak || priorStreak < 1) return 1
@@ -345,7 +383,7 @@ export function buildMatchupHistory(results) {
       state.set(name, {
         rating: Math.max(RATING_FLOOR, base + delta),
         gamesPlayed: (prev?.gamesPlayed ?? 0) + 1,
-        winStreak: won ? (prev?.winStreak ?? 0) + 1 : 0,
+        winStreak: nextStreak(prev?.winStreak, won, teams.length),
         lastPlayedAt: playedAt,
       })
     }
@@ -565,8 +603,9 @@ export function computeEloChanges(teams, currentRatings) {
     for (const name of teamA.players) {
       const entry = currentRatings.get(name)
       const gp = entry?.gamesPlayed ?? 0
-      // Only winners are boosted; the bonus uses the streak carried into the game.
-      const streakMult = teamA.won ? streakBonusMultiplier(entry?.winStreak ?? 0) : 1
+      // Only winners are boosted; the bonus uses the streak carried into the
+      // game, counted within this format alone.
+      const streakMult = teamA.won ? streakBonusMultiplier(streakFor(entry, teams.length)) : 1
       changes.set(name, {
         delta: kFactor(gp) * pairwiseDelta * streakMult * soloLossMult,
         oldRating: entry?.rating ?? initialRatingFor(name),

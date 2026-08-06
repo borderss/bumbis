@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { randomBytes } from 'node:crypto'
-import { decayedRating, graceDaysFor, RATING_FLOOR } from './elo.js'
+import { decayedRating, graceDaysFor, nextStreak, RATING_FLOOR } from './elo.js'
 import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -179,6 +179,16 @@ try {
   // Column already exists.
 }
 
+// Migration: streaks are counted per format, so the original column now holds
+// only the two-team run and this one the three-or-more-team run. Both are
+// rebuilt from the game log on every startup, so no backfill is needed — the
+// default 0 is a transient seed exactly as above.
+try {
+  db.exec(`ALTER TABLE player_elo ADD COLUMN win_streak_multi INTEGER NOT NULL DEFAULT 0`)
+} catch {
+  // Column already exists.
+}
+
 // Migration: forum options added after the table first shipped.
 for (const col of ['dativa INTEGER NOT NULL DEFAULT 0', 'allow_suggestions INTEGER NOT NULL DEFAULT 0']) {
   try {
@@ -230,21 +240,22 @@ const resetRoomStmt = db.prepare(
 const pruneStmt = db.prepare(`DELETE FROM rooms WHERE updated_at < ?`)
 
 const getPlayerEloStmt = db.prepare(
-  `SELECT name, rating, games_played, wins, win_streak, last_played_at FROM player_elo WHERE name = ?`,
+  `SELECT name, rating, games_played, wins, win_streak, win_streak_multi, last_played_at FROM player_elo WHERE name = ?`,
 )
 const getAllPlayerEloStmt = db.prepare(
-  `SELECT name, rating, games_played, wins, win_streak, last_played_at FROM player_elo ORDER BY rating DESC`,
+  `SELECT name, rating, games_played, wins, win_streak, win_streak_multi, last_played_at FROM player_elo ORDER BY rating DESC`,
 )
 const upsertPlayerEloStmt = db.prepare(`
-  INSERT INTO player_elo (name, rating, games_played, wins, win_streak, last_played_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO player_elo (name, rating, games_played, wins, win_streak, win_streak_multi, last_played_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(name) DO UPDATE SET
-    rating         = excluded.rating,
-    games_played   = excluded.games_played,
-    wins           = excluded.wins,
-    win_streak     = excluded.win_streak,
-    last_played_at = excluded.last_played_at,
-    updated_at     = excluded.updated_at
+    rating           = excluded.rating,
+    games_played     = excluded.games_played,
+    wins             = excluded.wins,
+    win_streak       = excluded.win_streak,
+    win_streak_multi = excluded.win_streak_multi,
+    last_played_at   = excluded.last_played_at,
+    updated_at       = excluded.updated_at
 `)
 const resetAllEloStmt = db.prepare(`DELETE FROM player_elo`)
 
@@ -370,7 +381,7 @@ export function getPlayerRatingsMap(asOf = Date.now()) {
     map.set(row.name, {
       rating: decayedRating(row.rating, row.last_played_at, asOf, graceDaysFor(row.name)),
       gamesPlayed: row.games_played,
-      winStreak: row.win_streak,
+      winStreak: { duel: row.win_streak, multi: row.win_streak_multi },
     })
   }
   return map
@@ -444,8 +455,11 @@ export function getGambleHistory(limit = 100) {
  * it becomes each participant's new last-played time, and any inactivity decay
  * accrued up to that moment is banked into the base rating before the delta is
  * added (so returning after a long break does not refund the decayed points).
+ *
+ * `teamCount` selects which streak counter the game advances; the other format's
+ * counter is carried through untouched.
  */
-export function applyEloChanges(changes, playedAt = Date.now()) {
+export function applyEloChanges(changes, playedAt = Date.now(), teamCount = 2) {
   const apply = db.transaction(() => {
     const now = Date.now()
     for (const [name, { delta, oldRating, won, gamesPlayed }] of changes) {
@@ -455,14 +469,20 @@ export function applyEloChanges(changes, playedAt = Date.now()) {
         : oldRating
       const currentGames = currentRow?.games_played ?? gamesPlayed
       const currentWins = currentRow?.wins ?? 0
-      // Extend the streak on a win, reset it on any non-win (loss or tied-top).
-      const newStreak = won ? (currentRow?.win_streak ?? 0) + 1 : 0
+      // Extend this format's streak on a win, reset it on any non-win (loss or
+      // tied-top); the other format's run is left as it stands.
+      const streak = nextStreak(
+        { duel: currentRow?.win_streak ?? 0, multi: currentRow?.win_streak_multi ?? 0 },
+        won,
+        teamCount,
+      )
       upsertPlayerEloStmt.run(
         name,
         Math.max(RATING_FLOOR, baseRating + delta),
         currentGames + 1,
         currentWins + (won ? 1 : 0),
-        newStreak,
+        streak.duel,
+        streak.multi,
         playedAt,
         now,
       )

@@ -14,9 +14,11 @@ import {
   buildMatchupHistory,
   computeEloChanges,
   computeMatchupShifts,
+  nextStreak,
   pairKey,
   predictWinProbabilities,
   streakBonusMultiplier,
+  streakFor,
 } from './elo.js'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -340,4 +342,54 @@ test('the streak bonus only lifts the winner, and only their gain', () => {
     Math.abs(b.get('W1').delta / a.get('W1').delta - (1 + STREAK_BONUS_MAX)) < 1e-9,
     'a 5-win streak should apply exactly the capped multiplier',
   )
+})
+
+test('a two-team streak pays nothing in a three-team game', () => {
+  const names = ['W1', 'W2', 'A1', 'A2', 'B1', 'B2']
+  const lineups = [
+    ['W1', 'W2'],
+    ['A1', 'A2'],
+    ['B1', 'B2'],
+  ]
+  const scores = [10, 6, 4]
+
+  const idle = new Map(names.map((n) => [n, { rating: 1200, gamesPlayed: 30, winStreak: { duel: 0, multi: 0 } }]))
+  // A long run built in two-team games, with nothing yet in three-team ones.
+  const duelRun = new Map(
+    names.map((n) => [n, { rating: 1200, gamesPlayed: 30, winStreak: { duel: 5, multi: 0 } }]),
+  )
+  const multiRun = new Map(
+    names.map((n) => [n, { rating: 1200, gamesPlayed: 30, winStreak: { duel: 0, multi: 5 } }]),
+  )
+
+  const base = computeEloChanges(played(lineups, scores), idle).get('W1').delta
+  const carried = computeEloChanges(played(lineups, scores), duelRun).get('W1').delta
+  const earned = computeEloChanges(played(lineups, scores), multiRun).get('W1').delta
+
+  assert.equal(carried, base, 'a run built in 2v2 must not boost a three-team win')
+  assert.ok(earned > base, 'a run built in three-team games still pays there')
+})
+
+test('a streak in one format survives a loss in the other', () => {
+  const prior = { duel: 0, multi: 4 }
+
+  // Losing a two-team game clears the duel counter and leaves multi standing.
+  const afterDuelLoss = nextStreak(prior, false, 2)
+  assert.equal(afterDuelLoss.multi, 4, 'the three-team run is independent of a two-team loss')
+  assert.equal(afterDuelLoss.duel, 0)
+
+  // Losing a three-team game is what actually ends that run.
+  assert.equal(nextStreak(prior, false, 3).multi, 0, 'a three-team loss ends the three-team run')
+
+  assert.equal(nextStreak(prior, true, 3).multi, 5, 'a three-team win extends it')
+  assert.equal(nextStreak(prior, true, 2).duel, 1, 'a two-team win starts the two-team run')
+})
+
+test('streakFor reads a plain number as a single shared counter', () => {
+  // Callers that still hand over one number must not silently lose their bonus.
+  assert.equal(streakFor({ winStreak: 3 }, 2), 3)
+  assert.equal(streakFor({ winStreak: 3 }, 3), 3)
+  assert.equal(streakFor({ winStreak: { duel: 1, multi: 7 } }, 2), 1)
+  assert.equal(streakFor({ winStreak: { duel: 1, multi: 7 } }, 3), 7)
+  assert.equal(streakFor(undefined, 3), 0)
 })

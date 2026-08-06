@@ -51,6 +51,7 @@ import {
   decayedRating,
   graceDaysFor,
   initialRatingFor,
+  nextStreak,
   predictWinProbabilities,
   resolvePlayers,
 } from './elo.js'
@@ -677,7 +678,7 @@ app.post('/api/results', (req, res) => {
   try {
     const currentRatings = getPlayerRatingsMap(entry.createdAt)
     const changes = computeEloChanges(teams, currentRatings)
-    if (changes.size > 0) applyEloChanges(changes, entry.createdAt)
+    if (changes.size > 0) applyEloChanges(changes, entry.createdAt, teams.length)
   } catch (err) {
     console.error('ELO update failed:', err)
   }
@@ -771,8 +772,9 @@ function ratingsAsOf(cutoff) {
         rating: Math.max(RATING_FLOOR, base + delta),
         gamesPlayed: (prev?.gamesPlayed ?? 0) + 1,
         wins: (prev?.wins ?? 0) + (won ? 1 : 0),
-        // Mirror applyEloChanges: extend on a win, reset on any non-win.
-        winStreak: won ? (prev?.winStreak ?? 0) + 1 : 0,
+        // Mirror applyEloChanges: extend this format's run on a win, reset it on
+        // any non-win, leave the other format's alone.
+        winStreak: nextStreak(prev?.winStreak, won, teams.length),
         lastPlayedAt: playedAt,
       })
     }
@@ -812,7 +814,7 @@ function computeResultEloDeltas() {
       state.set(name, {
         rating: after,
         gamesPlayed: (prev?.gamesPlayed ?? 0) + 1,
-        winStreak: won ? (prev?.winStreak ?? 0) + 1 : 0,
+        winStreak: nextStreak(prev?.winStreak, won, teams.length),
         lastPlayedAt: playedAt,
       })
     }
@@ -932,7 +934,7 @@ function recalculateElo() {
   resetElo()
   for (const { teams, playedAt } of getResultsForRecalculation()) {
     const changes = computeEloChanges(teams, getPlayerRatingsMap(playedAt))
-    if (changes.size > 0) applyEloChanges(changes, playedAt)
+    if (changes.size > 0) applyEloChanges(changes, playedAt, teams.length)
   }
 }
 

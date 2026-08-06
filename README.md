@@ -160,6 +160,28 @@ delta_winner = streak_mult × K × average over opponents of (mov × acf × (S �
 
 `STREAK_BONUS_PER_WIN = 0.05` (+5% per prior consecutive win) and `STREAK_BONUS_MAX = 0.25` (capped at +25%, reached at a 5-win streak).
 
+**Streaks are counted per format.** Two-team and three-team games keep separate
+counters (`player_elo.win_streak` and `win_streak_multi`), because winning with
+a third side on the pitch is a rarer thing than winning a straight two-team game
+— roughly a one-in-three shot against one-in-two. Carrying a run across formats
+let a 2v2 streak pay out on a 2v2v2 win it had not earned, which happened 22
+times in a 222-game season, and the reverse 31 times.
+
+The counters are **independent**: losing a two-team game resets only the
+two-team run. So a three-team streak can sit frozen through a stretch of 2v2 and
+still pay when that format comes back around. That is deliberate — the run is a
+record within its format, not a record of recent form overall.
+
+This is a fairness change, not an inflation fix. Measured over the same 222
+games, per-format counters inject 494 points against 501 for a single shared
+counter — 98 %, i.e. no meaningful difference. The same wins simply land in two
+counters instead of one. Only lowering the constants (or removing the bonus)
+changes the drift.
+
+The streaks *reported* as fun facts — longest win streak, current streak — are
+counted separately over a player's whole history, across every format. Those are
+records about the player; the per-format counters are a rating mechanism.
+
 | Prior streak | Multiplier |
 |---|---|
 | 0 (first win) | 1.00 |
@@ -171,7 +193,8 @@ Only the **winner's** gain is amplified — the opponent's loss is unchanged, so
 
 **This bonus is where the scale drifts.** Replaying a season at this group's format mix (87 two-team, 135 three-team games) injects roughly 1100 points at the old +10%/+50% setting and about 25 points with the bonus switched off — the rest of the model is very nearly zero-sum. The injection spreads evenly across players regardless of win rate, so it does not distort the order; it just walks the whole scale away from the 1200 everyone starts at. Halving the constants halves the drift to ~580 points and costs nothing visible: the average rating change per game moves from 32.9 to 32.5, because the swing comes from `K` and margin-of-victory, not from this.
 
-Splitting the streak per format (a separate counter for 2-team and 3-team games) was measured and does **not** reduce the drift — it redistributes the same wins across two counters and injects the same total. It would be a fair change for its own sake, since a streak within one format is a more meaningful thing to report, but not as an inflation fix.
+Splitting the streak per format does **not** reduce the drift — see above; it is
+in the model for fairness, not for inflation.
 
 ### Handling the "best player with worst player" case
 
@@ -265,4 +288,5 @@ grossly wrong value, not choose between 0.30 and 0.40.
 | Tied winners (e.g. 7-7) | No win counted; S = 0.5 pairwise, plain Elo applies |
 | Server restart with existing results | ELO is bootstrapped by replaying all results in chronological order |
 | Inactive player | Loses 2 pts/day after 7-day grace, floored at 800; computed from `last_played_at`, not stored |
+| Win streak carried between formats | Not carried — 2-team and 3-team runs are counted separately; a loss resets only that format's run |
 | Players who have never met | No matchup term — the prediction falls back to ratings alone |
