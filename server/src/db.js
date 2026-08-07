@@ -34,6 +34,16 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_players_room ON players(room_id, created_at);
 
+  CREATE TABLE IF NOT EXISTS room_messages (
+    id         TEXT PRIMARY KEY,
+    room_id    TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    body       TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_room_messages_room ON room_messages(room_id, created_at);
+
   CREATE TABLE IF NOT EXISTS game_results (
     id         TEXT PRIMARY KEY,
     date       TEXT NOT NULL,
@@ -238,6 +248,15 @@ const resetRoomStmt = db.prepare(
   `UPDATE rooms SET status = 'open', teams_json = NULL, updated_at = ? WHERE id = ?`,
 )
 const pruneStmt = db.prepare(`DELETE FROM rooms WHERE updated_at < ?`)
+const insertRoomMessageStmt = db.prepare(
+  `INSERT INTO room_messages (id, room_id, name, body, created_at) VALUES (?, ?, ?, ?, ?)`,
+)
+// Most recent messages, oldest-first for display (the subquery grabs the newest).
+const getRoomMessagesStmt = db.prepare(
+  `SELECT id, name, body, created_at FROM (
+     SELECT * FROM room_messages WHERE room_id = ? ORDER BY created_at DESC LIMIT 100
+   ) ORDER BY created_at ASC`,
+)
 
 const getPlayerEloStmt = db.prepare(
   `SELECT name, rating, games_played, wins, win_streak, win_streak_multi, last_played_at FROM player_elo WHERE name = ?`,
@@ -343,7 +362,17 @@ export function getRoomState(roomId) {
     teamCount: room.team_count,
     teams: room.teams_json ? JSON.parse(room.teams_json) : null,
     players: getPlayersStmt.all(roomId),
+    messages: getRoomMessagesStmt.all(roomId),
   }
+}
+
+/** Append a lobby chat message (body is capped at FORUM_MESSAGE_MAX_LEN). */
+export function addRoomMessage(roomId, name, body) {
+  const now = Date.now()
+  const id = genId(10)
+  insertRoomMessageStmt.run(id, roomId, name, body.slice(0, FORUM_MESSAGE_MAX_LEN), now)
+  touchRoomStmt.run(now, roomId)
+  return { id, name, body, created_at: now }
 }
 
 /** Idempotent check-in: returns the player row (existing or freshly inserted). */

@@ -185,53 +185,14 @@
               <p class="text-on-surface-variant uppercase font-black tracking-widest text-sm mb-4">
                 Chat
               </p>
-              <div ref="chatScroll" class="space-y-3 max-h-72 overflow-y-auto mb-4 pr-1">
-                <p v-if="messages.length === 0" class="text-outline-variant">
-                  No messages yet. Say hi 👋
-                </p>
-                <div
-                  v-for="m in messages"
-                  :key="m.id"
-                  class="bg-surface-container-high rounded-2xl px-4 py-3 flex items-start justify-between gap-2"
-                >
-                  <div class="min-w-0">
-                    <p class="text-xs font-extrabold uppercase tracking-wide text-primary">
-                      {{ m.name }}
-                    </p>
-                    <p class="text-on-surface break-words [overflow-wrap:anywhere]">{{ m.body }}</p>
-                  </div>
-                  <button
-                    v-if="isAdmin"
-                    type="button"
-                    class="material-symbols-outlined text-base text-on-surface-variant hover:text-secondary transition-colors shrink-0"
-                    title="Delete message"
-                    :disabled="busy"
-                    @click="deleteChat(m.id)"
-                  >
-                    delete
-                  </button>
-                </div>
-              </div>
-              <form class="relative" @submit.prevent="sendChat">
-                <input
-                  v-model="chatInput"
-                  class="w-full bg-surface-container-high border-none rounded-full py-4 pl-6 pr-14 font-bold focus:ring-2 focus:ring-primary-dim outline-none placeholder:text-outline-variant text-on-surface disabled:opacity-50"
-                  :placeholder="hasJoined ? 'Message' : 'Join to chat'"
-                  type="text"
-                  :maxlength="MESSAGE_MAX_LEN"
-                  :disabled="!hasJoined"
-                />
-                <button
-                  type="submit"
-                  class="absolute right-2 top-1/2 -translate-y-1/2 bg-primary text-on-primary w-10 h-10 rounded-full flex items-center justify-center hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
-                  :disabled="busy || !hasJoined || !chatInput.trim()"
-                >
-                  <span class="material-symbols-outlined text-xl font-bold">send</span>
-                </button>
-              </form>
-              <p class="text-right text-xs text-outline-variant mt-2">
-                {{ chatInput.length }}/{{ MESSAGE_MAX_LEN }}
-              </p>
+              <ChatPanel
+                :messages="messages"
+                :can-chat="hasJoined"
+                :can-delete="isAdmin"
+                :busy="busy"
+                @send="sendChat"
+                @delete="deleteChat"
+              />
             </div>
           </div>
           <!-- End left column -->
@@ -659,6 +620,7 @@
 </template>
 
 <script setup lang="ts">
+import ChatPanel, { isGifMessage } from '@/components/ChatPanel.vue'
 import WinnerCelebration, { type CelebrationVariant } from '@/components/WinnerCelebration.vue'
 import {
   addPlace,
@@ -675,11 +637,10 @@ import {
   spinForum,
   subscribeForum,
   updateConfig,
-  MESSAGE_MAX_LEN,
   type ForumConfig,
   type ForumState,
 } from '@/utils/foodForum'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 const route = useRoute()
@@ -703,8 +664,6 @@ const joinNameInput = ref('')
 const newPlaceInput = ref('')
 const timerInput = ref<number | null>(10)
 const selectedPlaceIds = ref<Set<string>>(new Set())
-const chatInput = ref('')
-const chatScroll = ref<HTMLElement | null>(null)
 
 // Wheel animation state (mirrors WheelPage).
 const selectedName = ref('')
@@ -923,7 +882,10 @@ function notifyNewMessages(next: ForumState) {
   if (!document.hidden) return // they're looking — no need to nag
   for (const m of fresh) {
     if (m.name === voterName.value) continue // skip our own
-    new Notification(`${m.name} · Friday Food Forum`, { body: m.body, tag: m.id })
+    new Notification(`${m.name} · Friday Food Forum`, {
+      body: isGifMessage(m.body) ? 'GIF' : m.body,
+      tag: m.id,
+    })
   }
 }
 
@@ -995,13 +957,9 @@ async function spin() {
   await run(() => spinForum(forumId.value, adminToken.value ?? undefined))
 }
 
-async function sendChat() {
-  const body = chatInput.value.trim()
-  if (!body || !voterId.value) return
-  await run(async () => {
-    await sendMessage(forumId.value, voterId.value!, body)
-    chatInput.value = ''
-  })
+async function sendChat(body: string) {
+  if (!voterId.value) return
+  await run(() => sendMessage(forumId.value, voterId.value!, body))
 }
 
 async function deleteChat(messageId: string) {
@@ -1114,14 +1072,6 @@ async function load() {
 }
 
 watch(forumId, load)
-// Keep the chat pinned to the newest message.
-watch(
-  () => messages.value.length,
-  () =>
-    nextTick(() => {
-      if (chatScroll.value) chatScroll.value.scrollTop = chatScroll.value.scrollHeight
-    }),
-)
 // When the admin tightens to single-select, the server collapses everyone's
 // votes — mirror that locally so the highlight doesn't keep several lit up.
 watch(

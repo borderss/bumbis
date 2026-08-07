@@ -23,5 +23,11 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script_stop: true
           command_timeout: 15m
+          # GIF picker provider keys, forwarded into the deploy script (sudo
+          # strips the environment, so they are passed explicitly).
+          envs: GIPHY_API_KEY,KLIPY_API_KEY
           script: |
-            sudo bash /var/www/bumbis/scripts/deploy.sh
+            sudo GIPHY_API_KEY="$GIPHY_API_KEY" KLIPY_API_KEY="$KLIPY_API_KEY" bash /var/www/bumbis/scripts/deploy.sh
+        env:
+          GIPHY_API_KEY: ${{ secrets.GIPHY_API_KEY }}
+          KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}

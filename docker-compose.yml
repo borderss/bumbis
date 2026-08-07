@@ -6,3 +6,7 @@ services:
     ports:
       - "80:80"
     image: vue3_new_project:latest
+    environment:
+      # GIF picker providers — leave unset to disable that tab's provider.
+      - GIPHY_API_KEY
+      - KLIPY_API_KEY

@@ -84,6 +84,8 @@ WorkingDirectory=$REPO_DIR/server
 ExecStart=$NODE_BIN src/index.js
 Environment=PORT=8787
 Environment=BUMBIS_DB=$REPO_DIR/server/data/bumbis.db
+Environment=GIPHY_API_KEY=${GIPHY_API_KEY:-}
+Environment=KLIPY_API_KEY=${KLIPY_API_KEY:-}
 Restart=on-failure
 RestartSec=2
 
