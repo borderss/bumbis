@@ -3,6 +3,7 @@ import {
   addMessage,
   addPlace,
   addPlayer,
+  addRoomMessage,
   addVoter,
   addWheelPlayer,
   applyEloChanges,
@@ -14,6 +15,7 @@ import {
   finalizeForumSpin,
   finalizeWheelSpin,
   forumExists,
+  FORUM_MESSAGE_MAX_LEN,
   getForumAdminToken,
   getForumState,
   lockForum,
@@ -265,6 +267,19 @@ app.post('/api/rooms/:id/split', (req, res) => {
   setSplit(id, teamCount, teams)
   broadcast(id)
   res.json(getRoomState(id))
+})
+
+app.post('/api/rooms/:id/messages', (req, res) => {
+  const state = getRoomState(req.params.id)
+  if (!state) return res.status(404).json({ error: 'Room not found' })
+  // Only checked-in players can chat.
+  const player = state.players.find((p) => p.id === req.body?.playerId)
+  if (!player) return res.status(403).json({ error: 'Check in before chatting' })
+  const body = normalizeName(req.body?.body)
+  if (!body) return res.status(400).json({ error: 'Message is empty' })
+  addRoomMessage(req.params.id, player.name, body) // body is capped server-side
+  broadcast(req.params.id)
+  res.status(201).json(getRoomState(req.params.id))
 })
 
 app.post('/api/rooms/:id/reset', (req, res) => {
@@ -643,6 +658,58 @@ app.post('/api/forums/:id/spin', (req, res) => {
   forumSpinTimers.set(req.params.id, timer)
 
   res.json(getForumState(req.params.id))
+})
+
+// --- GIF search (Discord-style picker) ------------------------------------------
+// Proxies Giphy / Klipy so the API keys stay server-side (env vars).
+// Empty q returns each provider's trending feed, like Discord's picker.
+const GIF_LIMIT = 24
+const GIF_PROVIDERS = {
+  giphy: {
+    key: process.env.GIPHY_API_KEY,
+    url: (q, key) =>
+      `https://api.giphy.com/v1/gifs/${q ? `search?q=${encodeURIComponent(q)}&` : 'trending?'}api_key=${key}&limit=${GIF_LIMIT}`,
+    parse: (json) =>
+      (json.data ?? []).map((g) => ({
+        id: g.id,
+        // Stable short URL — the API's own media URLs carry tracking params that
+        // can blow past the chat body cap.
+        url: g.id ? `https://media.giphy.com/media/${g.id}/200.gif` : undefined,
+        preview: g.images?.fixed_height_small?.url ?? g.images?.fixed_height?.url,
+      })),
+  },
+  klipy: {
+    key: process.env.KLIPY_API_KEY,
+    url: (q, key) =>
+      `https://api.klipy.com/api/v1/${key}/gifs/${q ? `search?q=${encodeURIComponent(q)}&` : 'trending?'}per_page=${GIF_LIMIT}&customer_id=bumbis`,
+    parse: (json) =>
+      (json.data?.data ?? []).map((g) => ({
+        id: g.id,
+        url: g.file?.md?.gif?.url ?? g.file?.hd?.gif?.url,
+        preview: g.file?.sm?.gif?.url ?? g.file?.md?.gif?.url,
+      })),
+  },
+}
+
+app.get('/api/gifs', async (req, res) => {
+  const provider = GIF_PROVIDERS[req.query.provider]
+  if (!provider) return res.status(400).json({ error: 'Unknown GIF provider' })
+  if (!provider.key) {
+    return res.status(503).json({ error: `${req.query.provider} is not configured on this server` })
+  }
+  try {
+    const upstream = await fetch(provider.url(String(req.query.q ?? '').trim(), provider.key))
+    if (!upstream.ok) throw new Error(`upstream ${upstream.status}`)
+    const gifs = provider
+      .parse(await upstream.json())
+      // A GIF is sent as a plain URL in the message body, which is capped —
+      // drop anything that would get truncated into a broken link.
+      .filter((g) => g.url && g.url.length <= FORUM_MESSAGE_MAX_LEN)
+    res.json({ gifs })
+  } catch (err) {
+    console.error('GIF search failed:', err)
+    res.status(502).json({ error: 'GIF search failed' })
+  }
 })
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }))

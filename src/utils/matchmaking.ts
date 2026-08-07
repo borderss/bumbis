@@ -8,12 +8,20 @@ export interface Player {
 
 export type RoomStatus = 'open' | 'split'
 
+export interface RoomMessage {
+  id: string
+  name: string
+  body: string
+  created_at: number
+}
+
 export interface Room {
   id: string
   status: RoomStatus
   teamCount: number
   teams: string[][] | null
   players: Player[]
+  messages: RoomMessage[]
 }
 
 export interface JoinResult {
@@ -64,6 +72,13 @@ export function splitTeams(id: string, teamCount: number): Promise<Room> {
 
 export function resetRoom(id: string): Promise<Room> {
   return request(`/rooms/${id}/reset`, { method: 'POST' })
+}
+
+export function sendRoomMessage(id: string, playerId: string, body: string): Promise<Room> {
+  return request(`/rooms/${id}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ playerId, body }),
+  })
 }
 
 /** The pair of players whose shared history weighed most on a team's forecast. */

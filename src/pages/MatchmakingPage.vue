@@ -179,6 +179,22 @@
           </div>
         </div>
 
+        <!-- Chat -->
+        <div
+          class="bg-surface-container-low rounded-[2rem] p-6 mb-6 shadow-[0_20px_40px_rgba(0,0,0,0.35)]"
+        >
+          <p class="text-on-surface-variant uppercase font-black tracking-widest text-sm mb-4">
+            Chat
+          </p>
+          <ChatPanel
+            :messages="messages"
+            :can-chat="isCheckedIn"
+            :busy="busy"
+            join-placeholder="Check in to chat"
+            @send="sendChat"
+          />
+        </div>
+
         <!-- Teams result -->
         <div v-if="room && room.status === 'split' && room.teams" class="space-y-6">
           <div class="flex items-center justify-between px-2">
@@ -341,6 +357,7 @@
 </template>
 
 <script setup lang="ts">
+import ChatPanel from '@/components/ChatPanel.vue'
 import {
   createRoom,
   describeMatchup,
@@ -349,6 +366,7 @@ import {
   joinRoom,
   leaveRoom,
   resetRoom,
+  sendRoomMessage,
   splitTeams,
   subscribeRoom,
   type Insight,
@@ -381,6 +399,7 @@ let unsubscribe: (() => void) | null = null
 let copyTimer: number | null = null
 
 const players = computed(() => room.value?.players ?? [])
+const messages = computed(() => room.value?.messages ?? [])
 const isCheckedIn = computed(
   () => myPlayerId.value !== null && players.value.some((p) => p.id === myPlayerId.value),
 )
@@ -476,6 +495,19 @@ async function leave() {
     localStorage.removeItem(playerKey(roomId.value))
   } catch (err) {
     errorMsg.value = err instanceof Error ? err.message : 'Could not leave'
+  } finally {
+    busy.value = false
+  }
+}
+
+async function sendChat(body: string) {
+  if (!myPlayerId.value || busy.value) return
+  busy.value = true
+  errorMsg.value = ''
+  try {
+    await sendRoomMessage(roomId.value, myPlayerId.value, body)
+  } catch (err) {
+    errorMsg.value = err instanceof Error ? err.message : 'Could not send message'
   } finally {
     busy.value = false
   }
