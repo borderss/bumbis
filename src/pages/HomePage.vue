@@ -170,6 +170,11 @@
               >
                 Dmitrijs Popovs
               </div>
+              <div
+                class="bg-surface-container-low px-6 py-3 rounded-full text-xl font-extrabold tracking-tight opacity-80"
+              >
+                Mārcis ✈️🏢🏢
+              </div>
             </div>
           </div>
 
