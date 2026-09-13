@@ -4,7 +4,6 @@ export const pairDefaultBallers: readonly string[] = pairDefaultBallersJson
 
 export const wheelSpinners = [
   'Zane',
-  'Mārcis',
   'Eduards',
   'Jēkabs',
   'Emīls',
